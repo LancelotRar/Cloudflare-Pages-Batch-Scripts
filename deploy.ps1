@@ -37,7 +37,7 @@ function Invoke-CfApi {
             $statusCode = 0
             if ($ex -is [System.Net.WebException]) {
                 $statusCode = [int]$ex.Response.StatusCode
-            } elseif ($ex -is [System.Net.Http.HttpRequestException] -and $ex -is [System.Management.Automation.MethodInvocationException] -eq $false) {
+            } elseif ($ex -is [System.Net.Http.HttpRequestException]) {
                 # .NET 5+ HttpRequestException has StatusCode property
                 $statusCode = [int]$ex.StatusCode
             }
@@ -233,124 +233,6 @@ function Sync-EnvState {
     }
 }
 
-function Remove-CustomDomains {
-    <#
-    .SYNOPSIS
-        Query Cloudflare for actual projects/domains, let user pick which to delete.
-        Uses .env only for credentials (token, account_id).
-    #>
-    $accounts = Get-Accounts
-    if (-not $accounts) { return }
-
-    Write-Host "`n========== 从 Cloudflare 获取实际域名 ==========" -ForegroundColor Yellow
-    Write-Warn "======================================================"
-    Write-Warn "重要：删除自定义域名前注意"
-    Write-Warn "------------------------------------------------------"
-    Write-Warn "1. 先从 DNS 服务商处删除 CNAME 记录"
-    Write-Warn "2. 再通过 CF API 删除域名"
-    Write-Warn "3. 跳过步骤 1 会导致无法从 CF 删除域名"
-    Write-Warn "======================================================"
-
-    # Collect all domains across all accounts
-    $domainItems = @()  # each: @{ Index, AccountName, AccountId, Token, ProjectName, DomainName }
-    $globalIdx = 0
-
-    foreach ($acct in $accounts) {
-    Write-Info "正在查询 $($acct.Name) ..."
-    $resp = Invoke-CfApi -Method Get -Uri "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects" -Token $acct.Token
-    if (-not $resp -or -not $resp.success) { Write-Warn "  跳过 $($acct.Name) - API 错误"; continue }
-
-    foreach ($project in $resp.result) {
-            $projName = $project.name
-            $customDomains = $project.domains | Where-Object { $_ -ne "$projName.pages.dev" }
-            foreach ($d in $customDomains) {
-                $globalIdx++
-                $domainItems += [PSCustomObject]@{
-                    Index       = $globalIdx
-                    AccountName = $acct.Name
-                    AccountId   = $acct.AccountId
-                    Token       = $acct.Token
-                    ProjectName = $projName
-                    DomainName  = $d
-                }
-            }
-        }
-    }
-
-    if ($domainItems.Count -eq 0) { Write-Info 'Cloudflare 上未找到自定义域名'; return }
-
-    # Show selection
-    Write-Host "`n找到 $($domainItems.Count) 个自定义域名：" -ForegroundColor Cyan
-    foreach ($item in $domainItems) {
-        Write-Host "  [$($item.Index)] $($item.AccountName) | $($item.ProjectName) | $($item.DomainName)" -ForegroundColor White
-    }
-    Write-Host '  [A]ll 全部'
-    Write-Host '  [Q]uit 退出'
-    Write-Host ''
-
-    $sel = Read-Host "输入序号删除（如 '1,3' 或 '1-3'）"
-    if ($sel -match '^[Qq]$') { Write-Info '已取消'; return }
-
-    $selectedItems = @()
-    if ($sel -match '^[Aa]$') {
-        $selectedItems = $domainItems
-    } else {
-        # Parse ranges and individual numbers
-        $sel -split ',' | ForEach-Object { $_.Trim() } | ForEach-Object {
-            if ($_ -match '^(\d+)-(\d+)$') {
-                $start, $end = [int]$Matches[1], [int]$Matches[2]
-                $selectedItems += $domainItems | Where-Object { $_.Index -ge $start -and $_.Index -le $end }
-            } elseif ($_ -match '^\d+$') {
-                $n = [int]$_
-                $selectedItems += $domainItems | Where-Object { $_.Index -eq $n }
-            }
-        }
-    }
-    $selectedItems = $selectedItems | Sort-Object Index -Unique
-
-    if ($selectedItems.Count -eq 0) { Write-Err 'No valid selection'; return }
-
-    Write-Warn "即将删除 $($selectedItems.Count) 个域名"
-    $confirm = Read-Host "输入 'yes' 确认"
-    if ($confirm -ne 'yes') { Write-Info '已取消'; return }
-
-    # Execute deletion
-    Write-Host "`n==================== 正在删除 ====================" -ForegroundColor Yellow
-    foreach ($item in $selectedItems) {
-        Write-Info "正在删除域名 '$($item.DomainName)'（项目：$($item.ProjectName)）..."
-        $uri = "https://api.cloudflare.com/client/v4/accounts/$($item.AccountId)/pages/projects/$($item.ProjectName)/domains/$($item.DomainName)"
-        $resp = Invoke-CfApi -Method Delete -Uri $uri -Token $item.Token
-        if ($resp -and $resp.success) { Write-Ok "  已删除 $($item.DomainName)" }
-        else { Write-Err "  失败：$($item.DomainName)" }
-    }
-    Write-Ok "记得检查 DNS CNAME 记录是否已清理"
-}
-
-function Add-CustomDomains {
-    <#
-    .SYNOPSIS
-        Set DOMAIN from .env on selected accounts.
-    #>
-    param([object[]]$Accounts)
-    if (-not $Accounts) { return }
-
-    Write-Host "`n==================== 添加自定义域名 ====================" -ForegroundColor Yellow
-
-    foreach ($acct in $Accounts) {
-        if (-not $acct.Domain) { Write-Warn "$($acct.Name): 未配置域名（在 .env 中设置 CF_X_PAGES_DOMAIN）"; continue }
-
-        Write-Info "正在为 $($acct.Project) 添加域名 '$($acct.Domain)' ..."
-        $uri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$($acct.Project)/domains"
-        $resp = Invoke-CfApi -Method Post -Uri $uri -Token $acct.Token -Body @{ name = $acct.Domain }
-        if ($resp -and $resp.success) {
-            Write-Ok "$($acct.Name): 域名 '$($acct.Domain)' 已添加（状态=$($resp.result.status)）"
-        } else {
-            $errMsg = if ($resp) { $resp.errors | ConvertTo-Json -Compress } else { '未知错误' }
-            Write-Err "$($acct.Name): 添加失败 - $errMsg"
-        }
-    }
-}
-
 function Get-ProjectDeployments {
     <#
     .SYNOPSIS
@@ -393,104 +275,18 @@ function Remove-ProjectDeployments {
     return $success
 }
 
-function Remove-Projects {
-    <#
-    .SYNOPSIS
-        Query Cloudflare for actual projects, let user pick which to delete.
-        Uses .env only for credentials.
-    #>
-    $accounts = Get-Accounts
-    if (-not $accounts) { return }
-
-    Write-Host "`n========== 从 Cloudflare 获取实际项目 ==========" -ForegroundColor Yellow
-
-    $projectItems = @()
-    $globalIdx = 0
-
-    foreach ($acct in $accounts) {
-    Write-Info "正在查询 $($acct.Name) 的项目 ..."
-    $resp = Invoke-CfApi -Method Get -Uri "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects" -Token $acct.Token
-    if (-not $resp -or -not $resp.success) { Write-Warn "  跳过 $($acct.Name) - API 错误"; continue }
-
-        foreach ($project in $resp.result) {
-            $globalIdx++
-            $projectItems += [PSCustomObject]@{
-                Index       = $globalIdx
-                AccountName = $acct.Name
-                AccountId   = $acct.AccountId
-                Token       = $acct.Token
-                ProjectName = $project.name
-                Domains     = ($project.domains -join ', ')
-            }
-        }
-    }
-
-    if ($projectItems.Count -eq 0) { Write-Info 'Cloudflare 上未找到项目'; return }
-
-    Write-Host "`n找到 $($projectItems.Count) 个项目：" -ForegroundColor Cyan
-    foreach ($item in $projectItems) {
-        Write-Host "  [$($item.Index)] $($item.AccountName) | $($item.ProjectName) | 域名：$($item.Domains)" -ForegroundColor White
-    }
-    Write-Host '  [A]ll 全部'
-    Write-Host '  [Q]uit 退出'
-    Write-Host ''
-
-    $sel = Read-Host "输入序号删除（如 '1,3' 或 '1-3'）"
-    if ($sel -match '^[Qq]$') { Write-Info '已取消'; return }
-
-    $selectedItems = @()
-    if ($sel -match '^[Aa]$') {
-        $selectedItems = $projectItems
-    } else {
-        $sel -split ',' | ForEach-Object { $_.Trim() } | ForEach-Object {
-            if ($_ -match '^(\d+)-(\d+)$') {
-                $start, $end = [int]$Matches[1], [int]$Matches[2]
-                $selectedItems += $projectItems | Where-Object { $_.Index -ge $start -and $_.Index -le $end }
-            } elseif ($_ -match '^\d+$') {
-                $n = [int]$_
-                $selectedItems += $projectItems | Where-Object { $_.Index -eq $n }
-            }
-        }
-    }
-    $selectedItems = $selectedItems | Sort-Object Index -Unique
-
-    if ($selectedItems.Count -eq 0) { Write-Err '未选择有效项目'; return }
-
-    Write-Warn "警告：即将永久删除 $($selectedItems.Count) 个项目及其所有部署！"
-    Write-Warn '此操作不可撤销！'
-    $confirm = Read-Host "输入 'yes' 确认"
-    if ($confirm -ne 'yes') { Write-Info '已取消'; return }
-
-    Write-Host "`n==================== 正在删除 ====================" -ForegroundColor Yellow
-    foreach ($item in $selectedItems) {
-        Write-Info "正在处理 '$($item.ProjectName)' ..."
-
-        # Check deployment count
-        $deployments = Get-ProjectDeployments -AccountId $item.AccountId -Token $item.Token -ProjectName $item.ProjectName
-        if ($deployments.Count -gt 50) {
-            Write-Warn "  项目有 $($deployments.Count) 个部署"
-            $clean = Read-Host "  是否先删除旧部署？（超过 100 个需先清理）[y/N]"
-            if ($clean -match '^[Yy]$') {
-                Remove-ProjectDeployments -AccountId $item.AccountId -Token $item.Token -ProjectName $item.ProjectName -Deployments $deployments
-            }
-        }
-
-        Write-Info "  正在删除项目 '$($item.ProjectName)' ..."
-        $uri = "https://api.cloudflare.com/client/v4/accounts/$($item.AccountId)/pages/projects/$($item.ProjectName)"
-        $resp = Invoke-CfApi -Method Delete -Uri $uri -Token $item.Token
-        if ($resp -and $resp.success) { Write-Ok "  已删除 $($item.ProjectName)" }
-        else { Write-Err "  失败：$($item.ProjectName)" }
-    }
-}
-
 function Remove-KvNamespaces {
     <#
     .SYNOPSIS
         Query KV namespaces from CF, interactive selection, batch delete.
         Shows which are bound to existing Pages projects.
     #>
-    $accounts = Get-Accounts
-    if (-not $accounts) { return }
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [object[]]$Accounts
+    )
+    if (-not $Accounts) { $Accounts = Get-Accounts }
+    if (-not $Accounts) { return }
 
     Write-Host "`n========== 从 Cloudflare 获取 KV 命名空间 ==========" -ForegroundColor Yellow
 
@@ -561,29 +357,6 @@ function Remove-KvNamespaces {
             $resp = Invoke-CfApi -Method Delete -Uri $uri -Token $item.Token
             if ($resp -and $resp.success) { Write-Ok "    已删除 $($item.Title)" }
             else { Write-Err "    失败：$($item.Title)" }
-        }
-    }
-}
-
-function New-Projects {
-    <#
-    .SYNOPSIS
-        Create Pages projects from .env PROJECT_NAME for selected accounts.
-    #>
-    param([object[]]$Accounts)
-    if (-not $Accounts) { return }
-
-    Write-Host "`n==================== 创建项目 ====================" -ForegroundColor Yellow
-
-    foreach ($acct in $Accounts) {
-        Write-Info "正在为 $($acct.Name) 创建项目 '$($acct.Project)' ..."
-        $uri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects"
-        $resp = Invoke-CfApi -Method Post -Uri $uri -Token $acct.Token -Body @{ name = $acct.Project; production_branch = 'main' }
-        if ($resp -and $resp.success) {
-            Write-Ok "$($acct.Name): 项目 '$($acct.Project)' 已创建"
-        } else {
-            $errMsg = if ($resp) { $resp.errors | ConvertTo-Json -Compress } else { '未知错误' }
-            Write-Err "$($acct.Name): 创建失败 - $errMsg"
         }
     }
 }
@@ -952,7 +725,7 @@ function Delete-Workflow {
             $deleteKv = Read-Host "  是否删除 KV 命名空间？[y/N]"
             if ($deleteKv -match '^[Yy]$') {
                 # Call existing Remove-KvNamespaces or inline
-                Remove-KvNamespaces
+                Remove-KvNamespaces -Accounts @($acct)
             }
         } else {
             Write-Info "  未找到 KV 命名空间"
