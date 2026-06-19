@@ -785,11 +785,14 @@ function Deploy-Projects {
         # ═══════════════════════════════════════════
         Write-Info "  [3/4] 正在配置项目 ..."
 
-        # Ensure KV namespace exists (by title from .env or fallback to project name)
-        $kvTitle = if ($acct.KvvNamespaceId) { $acct.KvvNamespaceId } else { "$($acct.Project)-kv" }
-        $nsId = Ensure-KvNamespace -AccountId $acct.AccountId -Token $acct.Token -Title $kvTitle
-        if (-not $nsId) { Write-Warn "  跳过 KV 绑定（命名空间创建失败）"; continue }
-        $acct.KvvNamespaceId = $nsId
+        # Ensure KV namespace exists (only if configured in .env; empty = skip)
+        if ($acct.KvvNamespaceId) {
+            $nsId = Ensure-KvNamespace -AccountId $acct.AccountId -Token $acct.Token -Title $acct.KvvNamespaceId
+            if (-not $nsId) { Write-Warn "  跳过 KV 绑定（命名空间创建失败）"; continue }
+            $acct.KvvNamespaceId = $nsId
+        } else {
+            Write-Info "  未配置 KV 命名空间，跳过"
+        }
 
         # Set config (env vars + KV binding) via PATCH
         $ok = Set-ProjectConfig -Account $acct -ProjectName $acct.Project
