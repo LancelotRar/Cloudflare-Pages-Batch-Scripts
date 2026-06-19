@@ -34,15 +34,14 @@ function Invoke-CfApi {
         try { return Invoke-RestMethod @params }
         catch {
             $ex = $_.Exception
-            $isTransient = $false
+            $statusCode = 0
             if ($ex -is [System.Net.WebException]) {
                 $statusCode = [int]$ex.Response.StatusCode
-                if ($statusCode -ge 500 -or $ex.Status -eq [System.Net.WebExceptionStatus]::Timeout -or $ex.Status -eq [System.Net.WebExceptionStatus]::ConnectFailure -or $ex.Status -eq [System.Net.WebExceptionStatus]::NameResolutionFailure) {
-                    $isTransient = $true
-                }
-            } elseif ($ex -is [System.TimeoutException] -or $ex -is [System.Net.Http.HttpRequestException]) {
-                $isTransient = $true
+            } elseif ($ex -is [System.Net.Http.HttpRequestException] -and $ex -is [System.Management.Automation.MethodInvocationException] -eq $false) {
+                # .NET 5+ HttpRequestException has StatusCode property
+                $statusCode = [int]$ex.StatusCode
             }
+            $isTransient = $statusCode -ge 500 -or $statusCode -eq 0
             if ($isTransient -and $attempt -lt 3) {
                 Write-Warn "重试 $attempt/3：$_"
                 Start-Sleep -Seconds $backoff[$attempt - 1]
@@ -579,7 +578,7 @@ function New-Projects {
     foreach ($acct in $Accounts) {
         Write-Info "正在为 $($acct.Name) 创建项目 '$($acct.Project)' ..."
         $uri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects"
-        $resp = Invoke-CfApi -Method Post -Uri $uri -Token $acct.Token -Body @{ name = $acct.Project }
+        $resp = Invoke-CfApi -Method Post -Uri $uri -Token $acct.Token -Body @{ name = $acct.Project; production_branch = 'main' }
         if ($resp -and $resp.success) {
             Write-Ok "$($acct.Name): 项目 '$($acct.Project)' 已创建"
         } else {
@@ -749,7 +748,7 @@ function Deploy-Projects {
         } else {
             Write-Info "  项目不存在，正在通过 API 创建 ..."
             $createUri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects"
-            $create = Invoke-CfApi -Method Post -Uri $createUri -Token $acct.Token -Body @{ name = $acct.Project }
+            $create = Invoke-CfApi -Method Post -Uri $createUri -Token $acct.Token -Body @{ name = $acct.Project; production_branch = 'main' }
             if ($create -and $create.success) {
                 Write-Ok "  项目已创建"
             } else {
