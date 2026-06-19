@@ -1,19 +1,16 @@
 ﻿<#
 .SYNOPSIS
-    Batch update Cloudflare Pages env vars and redeploy across multiple accounts.
+    Multi-account Cloudflare Pages manager.
 .DESCRIPTION
-    Reads .env to discover accounts, lets user select targets, updates plain_text
-    variables via Cloudflare API, then redeploys from cached zip source.
-.PARAMETER Selection
-    Account number(s) or 'A' for all. Omit for interactive menu.
+    Reads .env for multi-account config, then provides interactive menu for:
+    - Batch delete projects and custom domains (fetches real-time state from CF)
+    - Batch create projects and set custom domains (from .env configuration)
+    - Full workflow: delete old → create new → set domain
 .EXAMPLE
     .\deploy.ps1
-    .\deploy.ps1 -Selection 2
-    .\deploy.ps1 -Selection "1,3"
-    .\deploy.ps1 -Selection A
 #>
 [CmdletBinding()]
-param([string]$Selection)
+param()
 
 $ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -32,312 +29,6 @@ function Invoke-CfApi {
     if ($Body) { $params['Body'] = ($Body | ConvertTo-Json -Depth 5 -Compress) }
     try { return Invoke-RestMethod @params }
     catch { Write-Err "API call failed: $_"; return $null }
-}
-
-function Main {
-    # ============================================================
-    # 1.  Parse .env into structured account objects
-    # ============================================================
-    $envPath = Join-Path -Path $PSScriptRoot -ChildPath '.env'
-    if (-not (Test-Path -LiteralPath $envPath)) {
-        Write-Err '.env not found'; return 1
-    }
-
-    $lines       = Get-Content -LiteralPath $envPath -Encoding UTF8
-    $rawAccounts = [ordered]@{}
-    $currentKey  = $null
-
-    :envline foreach ($line in $lines) {
-        $trimmed = $line.Trim()
-        if (-not $trimmed -or $trimmed -match '^#') { continue }
-
-        # Detect start of a new account block: CF_X_NAME=email
-        if ($trimmed -match '^(CF_[^_]+)_NAME=(.+)') {
-            $currentKey = $Matches[1]
-            $rawAccounts[$currentKey] = @{
-                Id           = $currentKey
-                Name         = $Matches[2]
-                Token        = $null
-                AccountId    = $null
-                Project      = $null
-                ProjectType  = 'production'
-                CurrentDomain = $null
-                NewProject    = ''
-                NewDomain     = ''
-                Vars         = [ordered]@{}
-            }
-            continue
-        }
-        if (-not $currentKey) { continue }
-
-        # Known scalar fields (continue envline to skip later _TYPE regex)
-        switch -Regex ($trimmed) {
-            "^${currentKey}_TOKEN=(.*)"               { $rawAccounts[$currentKey].Token         = $Matches[1]; continue envline }
-            "^${currentKey}_ACCOUNT_ID=(.*)"           { $rawAccounts[$currentKey].AccountId     = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_PROJECT_NAME=(.*)"   { $rawAccounts[$currentKey].Project       = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_PROJECT_TYPE=(.*)"   { $rawAccounts[$currentKey].ProjectType    = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_CURRENT_DOMAIN=(.*)" { $rawAccounts[$currentKey].CurrentDomain   = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_NEW_PROJECT_NAME=(.*)" { $rawAccounts[$currentKey].NewProject   = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_NEW_DOMAIN=(.*)"     { $rawAccounts[$currentKey].NewDomain      = $Matches[1]; continue envline }
-        }
-
-        # Dynamic variable: CF_X_{NAME}_TYPE=plain_text  →  discovers $NAME
-        if ($trimmed -match "^${currentKey}_(.+)_TYPE=(.*)") {
-            $rawAccounts[$currentKey].Vars[$Matches[1]] = @{ type = $Matches[2]; value = $null }
-            continue
-        }
-
-        # Dynamic variable: CF_X_{NAME}=value  →  fills value for discovered $NAME
-        foreach ($known in $rawAccounts[$currentKey].Vars.Keys) {
-            if ($trimmed -match "^${currentKey}_${known}=(.*)") {
-                $rawAccounts[$currentKey].Vars[$known].value = $Matches[1]
-                break
-            }
-        }
-    }
-
-    # ---- Filter to only complete accounts ----
-    $accounts = $rawAccounts.Values |
-        Where-Object { $_.Token -and $_.AccountId -and $_.Project } |
-        Sort-Object Name
-
-    if ($accounts.Count -eq 0) { Write-Err 'No valid accounts found'; return 1 }
-
-    # ============================================================
-    # 2.  Interactive account selection
-    # ============================================================
-    $null = try { Clear-Host } catch { }
-    Write-Host '===================== Account list =====================' -ForegroundColor Yellow
-    for ($i = 0; $i -lt $accounts.Count; $i++) {
-        $a    = $accounts[$i]
-        $vars = ($a.Vars.Keys | ForEach-Object { "$_ = $($a.Vars[$_].value)" }) -join ', '
-        Write-Host "  [$($i+1)] $($a.Name)  ->  $($a.Project)"
-        $pad = ' ' * ("  [$($i+1)] ".Length)
-        if ($vars) { Write-Host "${pad}$vars" -ForegroundColor DarkGray }
-    }
-    Write-Host '========================================================' -ForegroundColor Yellow
-    Write-Host '  [A]ll accounts  (count: ' $accounts.Count ')'
-    Write-Host '  [Q]uit'
-    Write-Host ''
-
-    $sel = $Selection
-    if (-not $sel) {
-        try { if ([Console]::IsInputRedirected) { $sel = [Console]::In.ReadLine() } } catch { }
-        if (-not $sel) { $sel = Read-Host 'Selection' }
-    }
-
-    switch -Regex ($sel) {
-        '^[Qq]$' { Write-Info 'Quit'; return 0 }
-        '^[Aa]$' { $targets = $accounts }
-        default  {
-            $targets = @()
-            $sel -split ',' | ForEach-Object { $_.Trim() } | ForEach-Object {
-                $n = [int]$_
-                if ($n -ge 1 -and $n -le $accounts.Count) { $targets += $accounts[$n - 1] }
-                else { Write-Warn "Skipping invalid index: $_" }
-            }
-        }
-    }
-    if ($targets.Count -eq 0) { Write-Err 'No valid account selected'; return 1 }
-
-    Write-Info "Selected $($targets.Count) account(s)"
-
-    # ============================================================
-    # 3.  Prepare deployment source (cached extraction)
-    # ============================================================
-    # Resolve deploy dir from .env, fallback to default
-    $deployDir = if ($script:filesToRedeployDir) {
-        $d = $script:filesToRedeployDir
-        if (-not [System.IO.Path]::IsPathRooted($d)) {
-            $d = Join-Path -Path $PSScriptRoot -ChildPath $d
-        }
-        $d
-    } else {
-        Join-Path -Path $PSScriptRoot -ChildPath 'files-to-redeploy'
-    }
-    $deployDir = [System.IO.Path]::GetFullPath($deployDir)
-    $null = New-Item -ItemType Directory -Path $deployDir -Force
-
-    $zipFile  = Join-Path -Path $deployDir -ChildPath 'source.zip'
-    $cacheDir = Join-Path -Path $deployDir -ChildPath 'extracted'
-    $hashFile = Join-Path -Path $deployDir -ChildPath '.zip_hash'
-    $urlFile  = Join-Path -Path $deployDir -ChildPath '.zip_url'
-
-    # Re-download if URL changed
-    if ($script:filesToRedeployUrl -and (Test-Path -LiteralPath $zipFile)) {
-        $prevUrl = if (Test-Path -LiteralPath $urlFile) {
-            (Get-Content -LiteralPath $urlFile -Raw -Encoding UTF8).Trim()
-        } else { '' }
-        if ($prevUrl -ne $script:filesToRedeployUrl) {
-            Write-Info 'Download URL changed, removing old zip ...'
-            Remove-Item -LiteralPath $zipFile -Force
-            Remove-Item -LiteralPath $hashFile -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    # Download if missing
-    if (-not (Test-Path -LiteralPath $zipFile)) {
-        if ($script:filesToRedeployUrl) {
-            Write-Info "Downloading from $($script:filesToRedeployUrl) ..."
-            Invoke-WebRequest -Uri $script:filesToRedeployUrl -OutFile $zipFile -UseBasicParsing
-            Set-Content -Path $urlFile -Value $script:filesToRedeployUrl -NoNewline -Encoding UTF8
-            Write-Ok 'Download complete'
-        } else {
-            Write-Err "Neither $zipFile exists nor FILES_TO_REDEPLOY_DOWNLOAD_URL is set"
-            return 1
-        }
-    } else {
-        Write-Info "Using local zip: $zipFile"
-    }
-
-    # Hash-based cache invalidation
-    $currentHash = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash
-    $cachedHash  = if (Test-Path -LiteralPath $hashFile) {
-        (Get-Content -LiteralPath $hashFile -Raw -Encoding UTF8).Trim()
-    } else { '' }
-
-    if ($currentHash -ne $cachedHash) {
-        Write-Info 'Zip changed, re-extracting ...'
-        $null = Remove-Item -LiteralPath $cacheDir -Recurse -Force -ErrorAction SilentlyContinue
-        try {
-            Expand-Archive -Path $zipFile -DestinationPath $cacheDir -Force
-            Set-Content -Path $hashFile -Value $currentHash -NoNewline -Encoding UTF8
-            Write-Ok 'Extracted and cached'
-        } catch { Write-Err "Extraction failed: $_"; return 1 }
-    } else {
-        Write-Info 'Zip unchanged, using cached extraction'
-    }
-
-    # Resolve source dir (archive usually contains a top-level folder)
-    $sourceDir = Get-ChildItem -Directory -LiteralPath $cacheDir |
-        Select-Object -First 1 -ExpandProperty FullName
-    if (-not $sourceDir) { $sourceDir = $cacheDir }
-
-    # ============================================================
-    # 4.  Process each target account
-    # ============================================================
-    Write-Host "`n==================== Executing ====================" -ForegroundColor Yellow
-    $results = @()
-
-    :nextAccount foreach ($acct in $targets) {
-        Write-Host "`n--- $($acct.Name)  ($($acct.Project)) ---" -ForegroundColor Magenta
-
-        $env:CLOUDFLARE_API_TOKEN  = $acct.Token
-        $env:CLOUDFLARE_ACCOUNT_ID = $acct.AccountId
-
-        $accountResult = [PSCustomObject]@{
-            Name    = $acct.Name
-            Project = $acct.Project
-            Status  = 'Failed'
-            Url     = ''
-            Uuid    = $acct.Vars['UUID'].value
-        }
-
-        $apiUrl = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$($acct.Project)"
-
-        # ---- 4a.  Update env vars via API ----
-        $envVars = [ordered]@{}
-        foreach ($vName in $acct.Vars.Keys) {
-            $v = $acct.Vars[$vName]
-            if ($v.value) { $envVars[$vName] = @{ value = $v.value; type = $v.type } }
-        }
-
-        if ($envVars.Count -gt 0) {
-            Write-Info 'Updating variables ...'
-            $depCfg = [ordered]@{}
-            switch -Wildcard ($acct.ProjectType) {
-                'production' { $depCfg.production = @{ env_vars = $envVars } }
-                'preview'    { $depCfg.preview    = @{ env_vars = $envVars } }
-                default      { $depCfg.production = @{ env_vars = $envVars }
-                               $depCfg.preview    = @{ env_vars = $envVars } }
-            }
-            $body = @{ deployment_configs = $depCfg } | ConvertTo-Json -Depth 10
-
-            try {
-                $resp = Invoke-RestMethod -Uri $apiUrl -Method Patch -Headers @{
-                    'Authorization' = "Bearer $($acct.Token)"
-                    'Content-Type'  = 'application/json'
-                } -Body $body
-
-                if ($resp.success) { Write-Ok 'Variables updated' }
-                else {
-                    Write-Err "API error: $($resp.errors | ConvertTo-Json -Compress)"
-                    continue nextAccount
-                }
-            } catch {
-                Write-Err "API call failed: $_"
-                continue nextAccount
-            }
-        }
-
-        # ---- 4b.  Redeploy via wrangler ----
-        Write-Info 'Deploying to Pages ...'
-        try {
-            $raw = & wrangler pages deploy $sourceDir --project-name $acct.Project 2>&1
-            $text = $raw -join "`n"
-            Write-Host $text -ForegroundColor DarkGray
-
-            if ($text -match 'Deployment complete') {
-                $escapedProject = [regex]::Escape($acct.Project)
-                $m = [regex]::Match($text, "https://\S+\.${escapedProject}\.pages\.dev")
-                $accountResult.Url   = if ($m.Success) { $m.Value } else { '' }
-                $accountResult.Status = 'Success'
-                Write-Ok "Deploy succeeded  $($accountResult.Url)"
-            } else {
-                Write-Err 'Deploy failed – check output above'
-                continue nextAccount
-            }
-        } catch {
-            Write-Err "Deploy exception: $_"
-            continue nextAccount
-        }
-
-        # ---- 4c.  Verify variables ----
-        Write-Info 'Verifying variables ...'
-        Start-Sleep -Seconds 3
-        try {
-            $vr = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers @{
-                'Authorization' = "Bearer $($acct.Token)"
-            }
-            $checkEnv = if ($acct.ProjectType -eq 'preview') { 'preview' } else { 'production' }
-            $deployed = $vr.result.deployment_configs.$checkEnv.env_vars
-            $allOk    = $true
-
-            foreach ($vName in $acct.Vars.Keys) {
-                $v = $acct.Vars[$vName]
-                if (-not $v.value) { continue }
-                if ($deployed.$vName.value -eq $v.value) {
-                    Write-Ok "$vName = $($v.value)  (verified)"
-                } else {
-                    Write-Err "$vName mismatch: expected=$($v.value), actual=$($deployed.$vName.value)"
-                    $allOk = $false
-                }
-            }
-            if ($allOk) { Write-Ok 'Verification passed' }
-            else        { $accountResult.Status = 'Partial' }
-        } catch {
-            Write-Warn "Verification API call failed: $_"
-        }
-
-        $results += $accountResult
-        Write-Ok "$($acct.Name) done"
-    }
-
-    # ============================================================
-    # 5.  Summary
-    # ============================================================
-    Write-Host "`n====================================================" -ForegroundColor Green
-    Write-Host '                     Summary' -ForegroundColor Green
-    Write-Host "====================================================" -ForegroundColor Green
-    foreach ($r in $results) {
-        $icon   = if ($r.Status -eq 'Success') { '+' } else { 'x' }
-        $colour = if ($r.Status -eq 'Success') { 'Green' } else { 'Red' }
-        $statusTxt = if ($r.Status -eq 'Success') { $r.Uuid } else { $r.Status }
-        Write-Host "  $icon  $($r.Name)  ->  $statusTxt" -ForegroundColor $colour
-    }
-    Write-Host "====================================================" -ForegroundColor Green
-
-    return 0
 }
 
 # ================================================================
@@ -817,114 +508,74 @@ function Full-Workflow {
     }
 
     Write-Host "`n=============== Full Workflow Complete ===============" -ForegroundColor Green
-    Write-Info 'You can now run option 1 (Deploy) to push your source code to the new projects.'
+    Write-Info 'You can now deploy your source code to the new projects via wrangler or dashboard.'
 }
 
 # ================================================================
-# Entry point: main menu dispatch
+# Entry point: main menu loop
 # ================================================================
-$script:filesToRedeployDir      = $null
-$script:filesToRedeployUrl      = $null
+do {
+    $null = try { Clear-Host } catch { }
+    Write-Host '====================================================' -ForegroundColor Cyan
+    Write-Host '          Cloudflare Pages Manager' -ForegroundColor Cyan
+    Write-Host '====================================================' -ForegroundColor Cyan
+    Write-Host '  1.  Sync .env with Cloudflare state'
+    Write-Host '  2.  Delete custom domain(s)       (fetches real-time from CF)'
+    Write-Host '  3.  Add custom domain(s)           (from .env NEW_DOMAIN)'
+    Write-Host '  4.  Delete project(s)              (fetches real-time from CF)'
+    Write-Host '  5.  Create project(s)              (from .env NEW_PROJECT_NAME)'
+    Write-Host '  6.  Full workflow                  (delete old → create new → set domain)'
+    Write-Host '  Q.  Quit'
+    Write-Host '====================================================' -ForegroundColor Cyan
 
-# Pre-scan .env for global settings
-$envPath = Join-Path -Path $PSScriptRoot -ChildPath '.env'
-if (Test-Path -LiteralPath $envPath) {
-    Get-Content -LiteralPath $envPath -Encoding UTF8 | ForEach-Object {
-        $t = $_.Trim()
-        if ($t -match '^FILES_TO_REDEPLOY_DIR=(.+)')         { $script:filesToRedeployDir = $Matches[1] }
-        if ($t -match '^FILES_TO_REDEPLOY_DOWNLOAD_URL=(.+)') { $script:filesToRedeployUrl = $Matches[1] }
-    }
-}
+    $choice = Read-Host 'Choice'
 
-# ---- Main menu loop ----
-$exitCode = 0
-$runOnce  = $false
-
-# If -Selection was passed, go directly to deploy (backward compat)
-if ($Selection) {
-    $exitCode = Main
-} else {
-    do {
-        $null = try { Clear-Host } catch { }
-        Write-Host '====================================================' -ForegroundColor Cyan
-        Write-Host '          Cloudflare Pages Manager' -ForegroundColor Cyan
-        Write-Host '====================================================' -ForegroundColor Cyan
-        Write-Host '  1.  Deploy project(s)            (existing workflow)'
-        Write-Host '  2.  Sync .env with Cloudflare state'
-        Write-Host '  3.  Delete custom domain(s)'
-        Write-Host '  4.  Add custom domain(s)'
-        Write-Host '  5.  Delete project(s)'
-        Write-Host '  6.  Create project(s)'
-        Write-Host '  7.  Full workflow (delete old → create new → set domain)'
-        Write-Host '  8.  Run once: Deploy after .env sync'
-        Write-Host '  Q.  Quit'
-        Write-Host '====================================================' -ForegroundColor Cyan
-
-        $choice = Read-Host 'Choice'
-
-        switch -Regex ($choice) {
-            '^[Qq]$' { $exitCode = 0; break }
-            '^1$'    {
-                $exitCode = Main
-                $runOnce  = $true
-                Write-Host "`nPress Enter to return to menu ..." -ForegroundColor DarkGray
-                try { [Console]::In.ReadLine() | Out-Null } catch { }
-            }
-            '^2$'    {
-                Sync-EnvState
-                Write-Host "`nPress Enter to return to menu ..." -ForegroundColor DarkGray
-                try { [Console]::In.ReadLine() | Out-Null } catch { }
-            }
-            '^3$'    {
-                # Fetches actual domains from Cloudflare, interactive selection
-                Remove-CustomDomains
-                Write-Host "`nPress Enter to return to menu ..." -ForegroundColor DarkGray
-                try { [Console]::In.ReadLine() | Out-Null } catch { }
-            }
-            '^4$'    {
-                $accts = Select-Accounts
-                if ($accts) { Add-CustomDomains -Accounts $accts }
-                Write-Host "`nPress Enter to return to menu ..." -ForegroundColor DarkGray
-                try { [Console]::In.ReadLine() | Out-Null } catch { }
-            }
-            '^5$'    {
-                # Fetches actual projects from Cloudflare, interactive selection
-                Remove-Projects
-                Write-Host "`nPress Enter to return to menu ..." -ForegroundColor DarkGray
-                try { [Console]::In.ReadLine() | Out-Null } catch { }
-            }
-            '^6$'    {
-                $accts = Select-Accounts
-                if ($accts) { New-Projects -Accounts $accts }
-                Write-Host "`nPress Enter to return to menu ..." -ForegroundColor DarkGray
-                try { [Console]::In.ReadLine() | Out-Null } catch { }
-            }
-            '^7$'    {
-                # Full workflow - interactive delete + create new from .env config
-                Full-Workflow
-                Write-Host "`nPress Enter to return to menu ..." -ForegroundColor DarkGray
-                try { [Console]::In.ReadLine() | Out-Null } catch { }
-            }
-            '^8$'    {
-                Sync-EnvState
-                $exitCode = Main
-                $runOnce  = $true
-                Write-Host "`nPress Enter to return to menu ..." -ForegroundColor DarkGray
-                try { [Console]::In.ReadLine() | Out-Null } catch { }
-            }
-            default  {
-                Write-Warn 'Invalid choice'
-                Start-Sleep -Seconds 1
-            }
+    switch -Regex ($choice) {
+        '^[Qq]$'       { break }
+        '^1$'          {
+            Sync-EnvState
+            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
+            try { [Console]::In.ReadLine() | Out-Null } catch { }
         }
-    } while (-not $runOnce)
-}
+        '^2$'          {
+            Remove-CustomDomains
+            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
+            try { [Console]::In.ReadLine() | Out-Null } catch { }
+        }
+        '^3$'          {
+            $accts = Select-Accounts
+            if ($accts) { Add-CustomDomains -Accounts $accts }
+            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
+            try { [Console]::In.ReadLine() | Out-Null } catch { }
+        }
+        '^4$'          {
+            Remove-Projects
+            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
+            try { [Console]::In.ReadLine() | Out-Null } catch { }
+        }
+        '^5$'          {
+            $accts = Select-Accounts
+            if ($accts) { New-Projects -Accounts $accts }
+            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
+            try { [Console]::In.ReadLine() | Out-Null } catch { }
+        }
+        '^6$'          {
+            Full-Workflow
+            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
+            try { [Console]::In.ReadLine() | Out-Null } catch { }
+        }
+        default        {
+            Write-Warn 'Invalid choice'
+            Start-Sleep -Seconds 1
+        }
+    }
+} while ($choice -notmatch '^[Qq]$')
 
-# Cleanup
+# Cleanup env vars
 Remove-Item -LiteralPath Env:\CLOUDFLARE_API_TOKEN  -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath Env:\CLOUDFLARE_ACCOUNT_ID -ErrorAction SilentlyContinue
 
 Write-Host ''
 Write-Host 'Press Enter to exit ...' -ForegroundColor DarkGray
 try { [Console]::In.ReadLine() | Out-Null } catch { Start-Sleep -Seconds 3 }
-exit $exitCode
+exit 0
