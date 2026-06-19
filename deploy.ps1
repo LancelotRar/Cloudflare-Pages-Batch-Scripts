@@ -607,21 +607,29 @@ function Get-KvList {
 function Ensure-KvNamespace {
     <#
     .SYNOPSIS
-        Ensure a KV namespace exists. If namespace_id is provided and valid, return it.
-        Otherwise, create a new one with the given title.
+        Ensure a KV namespace exists by title.
+        Looks up existing KV namespaces by title, or creates a new one.
+        Returns the actual namespace UUID.
     #>
-    param([string]$AccountId, [string]$Token, [string]$NamespaceId, [string]$Title)
-    if ($NamespaceId) {
-        $resp = Invoke-CfApi -Method Get -Uri "https://api.cloudflare.com/client/v4/accounts/$AccountId/storage/kv/namespaces/$NamespaceId" -Token $Token
-        if ($resp -and $resp.success) { return $NamespaceId }
-        Write-Warn "  KV namespace $NamespaceId not found, will create new one"
+    param([string]$AccountId, [string]$Token, [string]$Title)
+    if ($Title) {
+        Write-Info "  Looking up KV namespace '$Title' ..."
+        $list = Get-KvList -AccountId $AccountId -Token $Token
+        $existing = $list | Where-Object { $_.title -eq $Title } | Select-Object -First 1
+        if ($existing) {
+            Write-Ok "  Found existing KV namespace '$Title' (id=$($existing.id))"
+            return $existing.id
+        }
+        Write-Info "  KV namespace '$Title' not found, creating ..."
+        $resp = Invoke-CfApi -Method Post -Uri "https://api.cloudflare.com/client/v4/accounts/$AccountId/storage/kv/namespaces" -Token $Token -Body @{ title = $Title }
+        if ($resp -and $resp.success) {
+            Write-Ok "  Created KV namespace '$Title' (id=$($resp.result.id))"
+            return $resp.result.id
+        }
+        Write-Err "  Failed to create KV namespace '$Title'"
+        return $null
     }
-    $resp = Invoke-CfApi -Method Post -Uri "https://api.cloudflare.com/client/v4/accounts/$AccountId/storage/kv/namespaces" -Token $Token -Body @{ title = $Title }
-    if ($resp -and $resp.success) {
-        Write-Ok "  Created KV namespace '$Title' (id=$($resp.result.id))"
-        return $resp.result.id
-    }
-    Write-Err "  Failed to create KV namespace '$Title'"
+    Write-Warn "  No KV namespace title specified, skipping"
     return $null
 }
 
@@ -767,9 +775,9 @@ function Deploy-Projects {
         # ═══════════════════════════════════════════
         Write-Info "  [2/3] Configuring project ..."
 
-        # Ensure KV namespace exists
-        $kvTitle = "$($acct.Project)-kv"
-        $nsId = Ensure-KvNamespace -AccountId $acct.AccountId -Token $acct.Token -NamespaceId $acct.KvvNamespaceId -Title $kvTitle
+        # Ensure KV namespace exists (by title from .env or fallback to project name)
+        $kvTitle = if ($acct.KvvNamespaceId) { $acct.KvvNamespaceId } else { "$($acct.Project)-kv" }
+        $nsId = Ensure-KvNamespace -AccountId $acct.AccountId -Token $acct.Token -Title $kvTitle
         if (-not $nsId) { Write-Warn "  Skipping KV binding (namespace creation failed)"; continue }
         $acct.KvvNamespaceId = $nsId
 
