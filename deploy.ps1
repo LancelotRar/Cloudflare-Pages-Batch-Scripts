@@ -60,9 +60,7 @@ function Get-Accounts {
                 AccountId     = $null
                 Project       = $null
                 ProjectType   = 'production'
-                CurrentDomain = $null
-                NewProject    = ''
-                NewDomain     = ''
+                Domain        = ''
                 KvvNamespaceId = $null
                 KvvBinding    = 'KV'
                 Vars          = [ordered]@{}
@@ -71,22 +69,25 @@ function Get-Accounts {
         }
         if (-not $currentKey) { continue }
 
+        # Check if this line sets a known field (Token, AccountId, Project, etc.)
+        $isKnown = $false
         switch -Regex ($trimmed) {
-            "^${currentKey}_TOKEN=(.*)"               { $rawAccounts[$currentKey].Token         = $Matches[1]; continue envline }
-            "^${currentKey}_ACCOUNT_ID=(.*)"           { $rawAccounts[$currentKey].AccountId     = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_PROJECT_NAME=(.*)"   { $rawAccounts[$currentKey].Project       = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_PROJECT_TYPE=(.*)"   { $rawAccounts[$currentKey].ProjectType    = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_CURRENT_DOMAIN=(.*)" { $rawAccounts[$currentKey].CurrentDomain   = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_NEW_PROJECT_NAME=(.*)" { $rawAccounts[$currentKey].NewProject   = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_NEW_DOMAIN=(.*)"     { $rawAccounts[$currentKey].NewDomain      = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_KV_NAMESPACE_ID=(.*)" { $rawAccounts[$currentKey].KvvNamespaceId = $Matches[1]; continue envline }
-            "^${currentKey}_PAGES_KV_BINDING=(.*)"     { $rawAccounts[$currentKey].KvvBinding    = $Matches[1]; continue envline }
+            "^${currentKey}_TOKEN=(.*)"               { $rawAccounts[$currentKey].Token         = $Matches[1]; $isKnown = $true; break }
+            "^${currentKey}_ACCOUNT_ID=(.*)"           { $rawAccounts[$currentKey].AccountId     = $Matches[1]; $isKnown = $true; break }
+            "^${currentKey}_PAGES_PROJECT_NAME=(.*)"   { $rawAccounts[$currentKey].Project       = $Matches[1]; $isKnown = $true; break }
+            "^${currentKey}_PAGES_PROJECT_TYPE=(.*)"   { $rawAccounts[$currentKey].ProjectType    = $Matches[1]; $isKnown = $true; break }
+            "^${currentKey}_PAGES_DOMAIN=(.*)"         { $rawAccounts[$currentKey].Domain        = $Matches[1]; $isKnown = $true; break }
+            "^${currentKey}_PAGES_KV_NAMESPACE_ID=(.*)" { $rawAccounts[$currentKey].KvvNamespaceId = $Matches[1]; $isKnown = $true; break }
+            "^${currentKey}_PAGES_KV_BINDING=(.*)"     { $rawAccounts[$currentKey].KvvBinding    = $Matches[1]; $isKnown = $true; break }
         }
+        if ($isKnown) { continue }
 
+        # Dynamic Vars: lines like CF_A_UUID_TYPE=plain_text define a new var
         if ($trimmed -match "^${currentKey}_(.+)_TYPE=(.*)") {
             $rawAccounts[$currentKey].Vars[$Matches[1]] = @{ type = $Matches[2]; value = $null }
             continue
         }
+        # Dynamic Vars: lines like CF_A_UUID=value fill in the value
         foreach ($known in $rawAccounts[$currentKey].Vars.Keys) {
             if ($trimmed -match "^${currentKey}_${known}=(.*)") {
                 $rawAccounts[$currentKey].Vars[$known].value = $Matches[1]
@@ -116,9 +117,8 @@ function Select-Accounts {
     for ($i = 0; $i -lt $accounts.Count; $i++) {
         $a    = $accounts[$i]
         $vars = ($a.Vars.Keys | ForEach-Object { "$_ = $($a.Vars[$_].value)" }) -join ', '
-        $domainInfo = if ($a.CurrentDomain) { ", domain=$($a.CurrentDomain)" } else { '' }
-        $newInfo    = if ($a.NewProject -or $a.NewDomain) { ", new=$($a.NewProject)$(if($a.NewDomain){' / '.$a.NewDomain})" } else { '' }
-        Write-Host "  [$($i+1)] $($a.Name)  ->  $($a.Project)$domainInfo$newInfo"
+        $domainInfo = if ($a.Domain) { ", domain=$($a.Domain)" } else { '' }
+        Write-Host "  [$($i+1)] $($a.Name)  ->  $($a.Project)$domainInfo"
     }
     Write-Host '========================================================' -ForegroundColor Yellow
     Write-Host '  [A]ll accounts'
@@ -145,10 +145,10 @@ function Select-Accounts {
 function Sync-EnvState {
     <#
     .SYNOPSIS
-        Pull actual Cloudflare Pages project state into .env.
-        Detects project names, custom domains, and updates the file.
+        Pull actual Cloudflare Pages project state into .env for reference.
+        Updates PROJECT_NAME, DOMAIN, and KV info to match what's actually on CF.
     #>
-    Write-Info 'Syncing .env with Cloudflare state ...'
+    Write-Info 'Syncing .env with Cloudflare actual state ...'
 
     $envPath       = Join-Path -Path $PSScriptRoot -ChildPath '.env'
     $envContent    = Get-Content -LiteralPath $envPath -Encoding UTF8
@@ -160,7 +160,6 @@ function Sync-EnvState {
 
     foreach ($line in $envContent) {
         $trimmed = $line.Trim()
-        $matched = $false
 
         if ($trimmed -match '^(CF_[^_]+)_PAGES_PROJECT_NAME=(.*)') {
             $key = $Matches[1]
@@ -174,61 +173,39 @@ function Sync-EnvState {
                         $actualName = $project.name
                         $actualDomains = ($project.domains | Where-Object { $_ -ne "$actualName.pages.dev" }) -join ', '
                         $actualKv = $project.deployment_configs.production.kv_namespaces
-                        $kvLine = ''
+                        # Update PROJECT_NAME and DOMAIN to actual values
+                        $updatedLines += "CF_${key}_PAGES_PROJECT_NAME=$actualName"
+                        $updatedLines += "CF_${key}_PAGES_DOMAIN=$actualDomains"
+                        # Update KV binding info
                         if ($actualKv) {
                             $kvBinding = ($actualKv.PSObject.Properties | Select-Object -First 1)
                             if ($kvBinding) {
-                                $kvLine = "CF_${key}_PAGES_KV_NAMESPACE_ID=$($kvBinding.Value.namespace_id)"
+                                $updatedLines += "CF_${key}_PAGES_KV_NAMESPACE_ID=$($kvBinding.Value.namespace_id)"
                                 $updatedLines += "CF_${key}_PAGES_KV_BINDING=$($kvBinding.Name)"
                             }
                         }
-                        if ($actualName -ne $acct.Project) {
-                            Write-Warn "  Project name mismatch: .env=$($acct.Project), actual=$actualName"
-                        }
-                        $updatedLines += "CF_${key}_PAGES_PROJECT_NAME=$actualName"
-                        $updatedLines += "CF_${key}_PAGES_CURRENT_DOMAIN=$actualDomains"
-                        if ($kvLine) { $updatedLines += $kvLine }
                         Write-Ok "  ${key}: project=$actualName, domain=$actualDomains"
                         $changed = $true
-                        $matched = $true
+                        # Skip original DOMAIN and KV lines for this key
+                        continue
                     }
-                } else {
-                    $updatedLines += $line  # keep original
                 }
-            } else {
-                $updatedLines += $line
             }
-            # Skip the following lines for this key (CURRENT_DOMAIN, NEW_PROJECT_NAME, NEW_DOMAIN)
-            # We'll regenerate them
+            # Keep original line if API failed
+            $updatedLines += $line
             continue
         }
 
-        # Skip CURRENT_DOMAIN, NEW_*, KV_* lines - they'll be regenerated
-        if ($trimmed -match '^CF_[^_]+_PAGES_CURRENT_DOMAIN=') { continue }
-        if ($trimmed -match '^CF_[^_]+_PAGES_NEW_PROJECT_NAME=') { continue }
-        if ($trimmed -match '^CF_[^_]+_PAGES_NEW_DOMAIN=') { continue }
+        # Skip DOMAIN and KV_* lines - they were regenerated above
+        if ($trimmed -match '^CF_[^_]+_PAGES_DOMAIN=') { continue }
         if ($trimmed -match '^CF_[^_]+_PAGES_KV_') { continue }
 
         $updatedLines += $line
     }
 
-    # Append NEW_* and KV_* fields for any accounts that don't have them yet
-    foreach ($acct in $accounts) {
-        if (-not ($envContent | Where-Object { $_ -match "^${acct.Id}_PAGES_NEW_PROJECT_NAME=" } | Select-Object -First 1)) {
-            $updatedLines += "CF_$($acct.Id)_PAGES_NEW_PROJECT_NAME="
-            $updatedLines += "CF_$($acct.Id)_PAGES_NEW_DOMAIN="
-            $changed = $true
-        }
-        if (-not ($envContent | Where-Object { $_ -match "^${acct.Id}_PAGES_KV_NAMESPACE_ID=" } | Select-Object -First 1)) {
-            $updatedLines += "CF_$($acct.Id)_PAGES_KV_NAMESPACE_ID="
-            $updatedLines += "CF_$($acct.Id)_PAGES_KV_BINDING=KV"
-            $changed = $true
-        }
-    }
-
     if ($changed) {
         $updatedLines -replace "`r",'' | Set-Content -LiteralPath $envPath -Encoding UTF8 -NoNewline
-        Write-Ok '.env updated with current Cloudflare state'
+        Write-Ok '.env synced with current Cloudflare state'
     } else {
         Write-Info '.env is already in sync'
     }
@@ -322,7 +299,7 @@ function Remove-CustomDomains {
 function Add-CustomDomains {
     <#
     .SYNOPSIS
-        Set NEW_DOMAIN on selected accounts.
+        Set DOMAIN from .env on selected accounts.
     #>
     param([object[]]$Accounts)
     if (-not $Accounts) { return }
@@ -330,13 +307,13 @@ function Add-CustomDomains {
     Write-Host "`n==================== Adding custom domains ====================" -ForegroundColor Yellow
 
     foreach ($acct in $Accounts) {
-        if (-not $acct.NewDomain) { Write-Warn "$($acct.Name): no new domain configured (set CF_X_PAGES_NEW_DOMAIN in .env)"; continue }
+        if (-not $acct.Domain) { Write-Warn "$($acct.Name): no domain configured (set CF_X_PAGES_DOMAIN in .env)"; continue }
 
-        Write-Info "Adding domain '$($acct.NewDomain)' to $($acct.Project) ..."
+        Write-Info "Adding domain '$($acct.Domain)' to $($acct.Project) ..."
         $uri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$($acct.Project)/domains"
-        $resp = Invoke-CfApi -Method Post -Uri $uri -Token $acct.Token -Body @{ name = $acct.NewDomain }
+        $resp = Invoke-CfApi -Method Post -Uri $uri -Token $acct.Token -Body @{ name = $acct.Domain }
         if ($resp -and $resp.success) {
-            Write-Ok "$($acct.Name): domain '$($acct.NewDomain)' added (status=$($resp.result.status))"
+            Write-Ok "$($acct.Name): domain '$($acct.Domain)' added (status=$($resp.result.status))"
         } else {
             $errMsg = if ($resp) { $resp.errors | ConvertTo-Json -Compress } else { 'unknown error' }
             Write-Err "$($acct.Name): add failed - $errMsg"
@@ -425,7 +402,7 @@ function Remove-Projects {
 function New-Projects {
     <#
     .SYNOPSIS
-        Create new Pages projects for selected accounts (using NEW_PROJECT_NAME).
+        Create Pages projects from .env PROJECT_NAME for selected accounts.
     #>
     param([object[]]$Accounts)
     if (-not $Accounts) { return }
@@ -433,13 +410,11 @@ function New-Projects {
     Write-Host "`n==================== Creating projects ====================" -ForegroundColor Yellow
 
     foreach ($acct in $Accounts) {
-        $newName = if ($acct.NewProject) { $acct.NewProject } else { $acct.Project }
-        Write-Info "Creating project '$newName' for $($acct.Name) ..."
-
+        Write-Info "Creating project '$($acct.Project)' for $($acct.Name) ..."
         $uri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects"
-        $resp = Invoke-CfApi -Method Post -Uri $uri -Token $acct.Token -Body @{ name = $newName }
+        $resp = Invoke-CfApi -Method Post -Uri $uri -Token $acct.Token -Body @{ name = $acct.Project }
         if ($resp -and $resp.success) {
-            Write-Ok "$($acct.Name): project '$newName' created"
+            Write-Ok "$($acct.Name): project '$($acct.Project)' created"
         } else {
             $errMsg = if ($resp) { $resp.errors | ConvertTo-Json -Compress } else { 'unknown error' }
             Write-Err "$($acct.Name): create failed - $errMsg"
@@ -578,10 +553,10 @@ function Deploy-Projects {
     Write-Host "`n========== Deploy Projects ==========" -ForegroundColor Magenta
     Write-Host 'This will:' -ForegroundColor White
     Write-Host '  1. Prepare deployment source files'
-    Write-Host '  2. Create projects (from NEW_PROJECT_NAME or existing PROJECT_NAME)'
+    Write-Host '  2. Create/update projects (from .env PROJECT_NAME)'
     Write-Host '  3. Set environment variables (UUID, ADMIN, etc.)'
     Write-Host '  4. Ensure KV namespace exists and bind to project'
-    Write-Host '  5. Set custom domain (from NEW_DOMAIN)'
+    Write-Host '  5. Set custom domain (from .env DOMAIN)'
     Write-Host '  6. Upload source files via wrangler'
     Write-Host ''
 
@@ -592,50 +567,48 @@ function Deploy-Projects {
 
     # Step 2-6: Process each account
     foreach ($acct in $accts) {
-        $projName = if ($acct.NewProject) { $acct.NewProject } else { $acct.Project }
-        Write-Host "`n--- $($acct.Name) → $projName ---" -ForegroundColor Magenta
+        Write-Host "`n--- $($acct.Name) → $($acct.Project) ---" -ForegroundColor Magenta
 
         # Check if project exists
-        $uri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$projName"
+        $uri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$($acct.Project)"
         $existing = Invoke-CfApi -Method Get -Uri $uri -Token $acct.Token
 
         if (-not $existing -or -not $existing.success) {
-            # Need to create project first
-            Write-Info "  Creating project '$projName' ..."
-            $resp = Invoke-CfApi -Method Post -Uri "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects" -Token $acct.Token -Body @{ name = $projName }
+            Write-Info "  Creating project '$($acct.Project)' ..."
+            $resp = Invoke-CfApi -Method Post -Uri "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects" -Token $acct.Token -Body @{ name = $acct.Project }
             if (-not $resp -or -not $resp.success) { Write-Err "  Failed to create project"; continue }
-            Write-Ok "  Project '$projName' created"
+            Write-Ok "  Project '$($acct.Project)' created"
         } else {
-            Write-Info "  Project '$projName' exists"
+            Write-Info "  Project '$($acct.Project)' exists"
         }
 
         # Ensure KV namespace
-        $kvTitle = "${projName}-kv"
+        $kvTitle = "$($acct.Project)-kv"
         $nsId = Ensure-KvNamespace -AccountId $acct.AccountId -Token $acct.Token -NamespaceId $acct.KvvNamespaceId -Title $kvTitle
         if (-not $nsId) { Write-Warn "  Skipping KV binding"; continue }
         $acct.KvvNamespaceId = $nsId
 
         # Set config (env vars + KV binding)
         Write-Info '  Setting project configuration ...'
-        $ok = Set-ProjectConfig -Account $acct -ProjectName $projName
+        $ok = Set-ProjectConfig -Account $acct -ProjectName $acct.Project
         if (-not $ok) { Write-Warn '  Config may be incomplete' }
 
         # Set custom domain
-        if ($acct.NewDomain) {
-            Write-Info "  Adding domain '$($acct.NewDomain)' ..."
-            $domUri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$projName/domains"
-            $resp = Invoke-CfApi -Method Post -Uri $domUri -Token $acct.Token -Body @{ name = $acct.NewDomain }
-            if ($resp -and $resp.success) { Write-Ok "  Domain '$($acct.NewDomain)' added" }
+        if ($acct.Domain) {
+            Write-Info "  Adding domain '$($acct.Domain)' ..."
+            $domUri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$($acct.Project)/domains"
+            $resp = Invoke-CfApi -Method Post -Uri $domUri -Token $acct.Token -Body @{ name = $acct.Domain }
+            if ($resp -and $resp.success) { Write-Ok "  Domain '$($acct.Domain)' added" }
             else { Write-Warn "  Domain add may have failed or already exists" }
         }
 
         # Upload source via wrangler
         Write-Info '  Uploading source files ...'
         try {
-            $raw = & wrangler pages deploy $sourceDir --project-name $projName 2>&1
+            $raw = & wrangler pages deploy $sourceDir --project-name $acct.Project 2>&1
             $text = $raw -join "`n"
             Write-Host $text -ForegroundColor DarkGray
-            if ($text -match 'Deployment complete') { Write-Ok "  Deployed to $projName" }
+            if ($text -match 'Deployment complete') { Write-Ok "  Deployed to $($acct.Project)" }
             else { Write-Err "  Deploy may have failed - check output above" }
         } catch { Write-Err "  Deploy exception: $_" }
     }
@@ -681,9 +654,9 @@ do {
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host '  1.  Sync .env with Cloudflare state'
     Write-Host '  2.  Delete custom domain(s)          (fetches real-time from CF)'
-    Write-Host '  3.  Add custom domain(s)              (from .env NEW_DOMAIN)'
+    Write-Host '  3.  Add custom domain(s)              (from .env DOMAIN)'
     Write-Host '  4.  Delete project(s)                 (fetches real-time from CF)'
-    Write-Host '  5.  Create project(s)                 (from .env NEW_PROJECT_NAME)'
+    Write-Host '  5.  Create project(s)                 (from .env PROJECT_NAME)'
     Write-Host '  6.  Deploy project(s)                 (create + config + KV + domain + upload)'
     Write-Host '  7.  Full workflow                     (delete old → deploy new)'
     Write-Host '  Q.  Quit'
