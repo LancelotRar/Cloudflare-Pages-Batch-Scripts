@@ -640,9 +640,8 @@ function Ensure-KvNamespace {
 function Prepare-Source {
     <#
     .SYNOPSIS
-        Prepare deployment source directory.
-        Always downloads fresh from URL (if configured), extracts zip, returns source path.
-        Downloads once per batch — caller calls this once before looping accounts.
+        Download latest source from FILES_TO_REDEPLOY_DOWNLOAD_URL, extract, return source path.
+        Downloads once per batch — always fresh, caller calls this once before looping accounts.
     #>
     # Read global FILES_TO_REDEPLOY_* from .env
     $deployDir  = $null
@@ -661,37 +660,25 @@ function Prepare-Source {
     }
     $deployDir = [System.IO.Path]::GetFullPath($deployDir)
 
-    if ($downloadUrl) {
-        # Fresh download every time — clean old files first
-        Write-Info "正在从 $downloadUrl 下载最新源码 ..."
-        if (Test-Path -LiteralPath $deployDir) {
-            Remove-Item -LiteralPath $deployDir -Recurse -Force
-        }
-        $null = New-Item -ItemType Directory -Path $deployDir -Force
-        $zipFile = Join-Path -Path $deployDir -ChildPath 'source.zip'
-        try {
-            Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFile -UseBasicParsing
-            $extractedDir = Join-Path -Path $deployDir -ChildPath 'extracted'
-            $null = New-Item -ItemType Directory -Path $extractedDir -Force
-            Expand-Archive -Path $zipFile -DestinationPath $extractedDir -Force
-            $src = Get-ChildItem -Directory -LiteralPath $extractedDir | Select-Object -First 1 -ExpandProperty FullName
-            if (-not $src) { $src = $extractedDir }
-            Write-Ok "源码已就绪：$src"
-            return $src
-        } catch { Write-Err "下载/解压失败：$_"; return $null }
-    }
+    if (-not $downloadUrl) { Write-Err '未配置 FILES_TO_REDEPLOY_DOWNLOAD_URL'; return $null }
 
-    # No URL configured — fall back to local files
-    $extractedDir = Join-Path -Path $deployDir -ChildPath 'extracted'
-    $sourceCandidates = @(Get-ChildItem -Directory -LiteralPath $extractedDir -ErrorAction SilentlyContinue)
-    if ($sourceCandidates.Count -gt 0) {
-        return $sourceCandidates[0].FullName
+    # Fresh download every time — clean old files first
+    Write-Info "正在从 $downloadUrl 下载最新源码 ..."
+    if (Test-Path -LiteralPath $deployDir) {
+        Remove-Item -LiteralPath $deployDir -Recurse -Force
     }
-    $hasFiles = @(Get-ChildItem -LiteralPath $deployDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -notin '.zip', '.hash', '.url' })
-    if ($hasFiles.Count -gt 0) { return $deployDir }
-
-    Write-Err '未找到源码文件，且未配置 FILES_TO_REDEPLOY_DOWNLOAD_URL'
-    return $null
+    $null = New-Item -ItemType Directory -Path $deployDir -Force
+    $zipFile = Join-Path -Path $deployDir -ChildPath 'source.zip'
+    try {
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFile -UseBasicParsing
+        $extractedDir = Join-Path -Path $deployDir -ChildPath 'extracted'
+        $null = New-Item -ItemType Directory -Path $extractedDir -Force
+        Expand-Archive -Path $zipFile -DestinationPath $extractedDir -Force
+        $src = Get-ChildItem -Directory -LiteralPath $extractedDir | Select-Object -First 1 -ExpandProperty FullName
+        if (-not $src) { $src = $extractedDir }
+        Write-Ok "源码已就绪：$src"
+        return $src
+    } catch { Write-Err "下载/解压失败：$_"; return $null }
 }
 
 function Set-ProjectConfig {
