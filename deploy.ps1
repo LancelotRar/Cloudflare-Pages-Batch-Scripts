@@ -1,11 +1,13 @@
 ﻿<#
 .SYNOPSIS
-    Multi-account Cloudflare Pages manager.
+    Multi-account Cloudflare Pages manager — two workflows.
 .DESCRIPTION
-    Reads .env for multi-account config, then provides interactive menu for:
-    - Batch delete projects and custom domains (fetches real-time state from CF)
-    - Batch create projects and set custom domains (from .env configuration)
-    - Full workflow: delete old → create new → set domain
+    Reads .env for multi-account config, provides interactive menu for:
+    1. Batch Delete: select accounts → query CF actual state → list projects →
+       select which to delete → delete custom domains + project →
+       optionally delete KV namespaces. Handles 100+ deployment edge case.
+    2. Batch Deploy: prepare source (download/extract) → create/update project →
+       bind KV → set environment variables → set custom domain → wrangler upload.
 .EXAMPLE
     .\deploy.ps1
 #>
