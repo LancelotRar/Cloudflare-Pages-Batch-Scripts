@@ -641,7 +641,8 @@ function Prepare-Source {
     <#
     .SYNOPSIS
         Prepare deployment source directory.
-        Downloads from URL if needed, extracts zip, returns source path.
+        Always downloads fresh from URL (if configured), extracts zip, returns source path.
+        Downloads once per batch — caller calls this once before looping accounts.
     #>
     # Read global FILES_TO_REDEPLOY_* from .env
     $deployDir  = $null
@@ -660,29 +661,37 @@ function Prepare-Source {
     }
     $deployDir = [System.IO.Path]::GetFullPath($deployDir)
 
-    # Check if source dir already has files
+    if ($downloadUrl) {
+        # Fresh download every time — clean old files first
+        Write-Info "正在从 $downloadUrl 下载最新源码 ..."
+        if (Test-Path -LiteralPath $deployDir) {
+            Remove-Item -LiteralPath $deployDir -Recurse -Force
+        }
+        $null = New-Item -ItemType Directory -Path $deployDir -Force
+        $zipFile = Join-Path -Path $deployDir -ChildPath 'source.zip'
+        try {
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFile -UseBasicParsing
+            $extractedDir = Join-Path -Path $deployDir -ChildPath 'extracted'
+            $null = New-Item -ItemType Directory -Path $extractedDir -Force
+            Expand-Archive -Path $zipFile -DestinationPath $extractedDir -Force
+            $src = Get-ChildItem -Directory -LiteralPath $extractedDir | Select-Object -First 1 -ExpandProperty FullName
+            if (-not $src) { $src = $extractedDir }
+            Write-Ok "源码已就绪：$src"
+            return $src
+        } catch { Write-Err "下载/解压失败：$_"; return $null }
+    }
+
+    # No URL configured — fall back to local files
     $extractedDir = Join-Path -Path $deployDir -ChildPath 'extracted'
     $sourceCandidates = @(Get-ChildItem -Directory -LiteralPath $extractedDir -ErrorAction SilentlyContinue)
     if ($sourceCandidates.Count -gt 0) {
         return $sourceCandidates[0].FullName
     }
-    # Check deploy dir itself
     $hasFiles = @(Get-ChildItem -LiteralPath $deployDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -notin '.zip', '.hash', '.url' })
     if ($hasFiles.Count -gt 0) { return $deployDir }
 
-    # Try to download and extract
-    if (-not $downloadUrl) { Write-Err 'No source files found and FILES_TO_REDEPLOY_DOWNLOAD_URL not set'; return $null }
-    $zipFile = Join-Path -Path $deployDir -ChildPath 'source.zip'
-    Write-Info "正在从 $downloadUrl 下载源码 ..."
-    try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFile -UseBasicParsing
-        $null = New-Item -ItemType Directory -Path $extractedDir -Force
-        Expand-Archive -Path $zipFile -DestinationPath $extractedDir -Force
-        $src = Get-ChildItem -Directory -LiteralPath $extractedDir | Select-Object -First 1 -ExpandProperty FullName
-        if (-not $src) { $src = $extractedDir }
-        Write-Ok "源码已就绪：$src"
-        return $src
-    } catch { Write-Err "下载/解压失败：$_"; return $null }
+    Write-Err '未找到源码文件，且未配置 FILES_TO_REDEPLOY_DOWNLOAD_URL'
+    return $null
 }
 
 function Set-ProjectConfig {
