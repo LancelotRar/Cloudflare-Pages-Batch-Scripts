@@ -691,14 +691,13 @@ function Set-ProjectConfig {
         $v = $Account.Vars[$vName]
         if ($v.value) { $envVars[$vName] = @{ value = $v.value; type = $v.type } }
     }
-    if ($envVars.Count -eq 0 -and -not $Account.KvvNamespaceId) { return $true }
+    if ($envVars.Count -eq 0 -and -not ($Account.KvvNamespaceId -and $Account.KvvBinding)) { return $true }
 
     $depCfg = [ordered]@{}
     $cfg = @{}
     if ($envVars.Count -gt 0) { $cfg['env_vars'] = $envVars }
-    if ($Account.KvvNamespaceId) {
-        $bindingName = if ($Account.KvvBinding) { $Account.KvvBinding } else { 'KV' }
-        $cfg['kv_namespaces'] = @{ $bindingName = @{ namespace_id = $Account.KvvNamespaceId } }
+    if ($Account.KvvNamespaceId -and $Account.KvvBinding) {
+        $cfg['kv_namespaces'] = @{ $Account.KvvBinding = @{ namespace_id = $Account.KvvNamespaceId } }
     }
     switch -Wildcard ($Account.ProjectType) {
         'production' { $depCfg.production = $cfg }
@@ -785,13 +784,13 @@ function Deploy-Projects {
         # ═══════════════════════════════════════════
         Write-Info "  [3/4] 正在配置项目 ..."
 
-        # Ensure KV namespace exists (only if configured in .env; empty = skip)
-        if ($acct.KvvNamespaceId) {
+        # Create KV namespace and bind (only if both namespace ID and binding name are configured)
+        if ($acct.KvvNamespaceId -and $acct.KvvBinding) {
             $nsId = Ensure-KvNamespace -AccountId $acct.AccountId -Token $acct.Token -Title $acct.KvvNamespaceId
             if (-not $nsId) { Write-Warn "  跳过 KV 绑定（命名空间创建失败）"; continue }
             $acct.KvvNamespaceId = $nsId
         } else {
-            Write-Info "  未配置 KV 命名空间，跳过"
+            Write-Info "  未配置 KV 命名空间或绑定名，跳过"
         }
 
         # Set config (env vars + KV binding) via PATCH
