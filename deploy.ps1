@@ -735,7 +735,9 @@ function Deploy-Projects {
     if (-not $sourceDir) { return }
 
     foreach ($acct in $accts) {
-        Write-Host "`n--- $($acct.Name) → $($acct.Project) ---" -ForegroundColor Magenta
+        # Set env vars for wrangler (avoids interactive prompts)
+        $env:CLOUDFLARE_API_TOKEN  = $acct.Token
+        $env:CLOUDFLARE_ACCOUNT_ID = $acct.AccountId
 
         # ═══════════════════════════════════════════
         # STEP 0: Ensure project exists via CF API (wrangler can't create projects non-interactively)
@@ -763,7 +765,7 @@ function Deploy-Projects {
         Write-Info "  [2/4] 首次上传：部署源码到 '$($acct.Project)' ..."
         $firstOk = $false
         try {
-            $raw = & wrangler pages deploy $sourceDir --project-name $acct.Project 2>&1
+            $raw = & wrangler pages deploy $sourceDir --project-name $acct.Project --branch main 2>&1
             $text = $raw -join "`n"
             Write-Host $text -ForegroundColor DarkGray
             if ($text -match 'Deployment complete' -or $text -match 'Success') {
@@ -807,7 +809,7 @@ function Deploy-Projects {
         # ═══════════════════════════════════════════
         Write-Info "  [4/4] 二次上传：配置生效后重新部署 ..."
         try {
-            $raw = & wrangler pages deploy $sourceDir --project-name $acct.Project 2>&1
+            $raw = & wrangler pages deploy $sourceDir --project-name $acct.Project --branch main 2>&1
             $text = $raw -join "`n"
             Write-Host $text -ForegroundColor DarkGray
             if ($text -match 'Deployment complete' -or $text -match 'Success') {
