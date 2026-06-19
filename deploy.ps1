@@ -781,32 +781,134 @@ function Deploy-Projects {
     Write-Host "`n========== Deploy Complete ==========" -ForegroundColor Green
 }
 
-function Full-Workflow {
+function Delete-Workflow {
     <#
     .SYNOPSIS
-        Full lifecycle: interactively delete old → create new → configure → deploy.
+        Batch delete workflow: select accounts → for each: list projects → select to delete → delete domains+project → select KV to delete.
     #>
-    Write-Host "`n=============== Full Workflow ===============" -ForegroundColor Magenta
-    Write-Host 'This will walk you through:' -ForegroundColor White
-    Write-Host '  Step 1 - Delete old custom domains (interactive)'
-    Write-Host '  Step 2 - Delete old projects (interactive)'
-    Write-Host '  Step 3 - Deploy new projects (create + config + KV + domain + upload)'
+    $accts = Select-Accounts
+    if (-not $accts) { return }
+
+    Write-Host "`n========== Delete Workflow ==========" -ForegroundColor Magenta
+    Write-Host 'This will walk through each account:' -ForegroundColor White
+    Write-Host '  1. List projects from Cloudflare'
+    Write-Host '  2. Select which projects to delete (deletes custom domains + project)'
+    Write-Host '  3. Optionally delete KV namespaces'
     Write-Host ''
 
-    Write-Host "========== Step 1: Delete old domains ==========" -ForegroundColor Cyan
-    Remove-CustomDomains
-    Write-Host "`nPress Enter to continue to Step 2 ..." -ForegroundColor DarkGray
-    try { [Console]::In.ReadLine() | Out-Null } catch { }
+    foreach ($acct in $accts) {
+        Write-Host "`n--- $($acct.Name) ---" -ForegroundColor Magenta
 
-    Write-Host "`n========== Step 2: Delete old projects ==========" -ForegroundColor Cyan
-    Remove-Projects
-    Write-Host "`nPress Enter to continue to Step 3 ..." -ForegroundColor DarkGray
-    try { [Console]::In.ReadLine() | Out-Null } catch { }
+        # Query projects
+        Write-Info "Querying projects ..."
+        $resp = Invoke-CfApi -Method Get -Uri "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects" -Token $acct.Token
+        if (-not $resp -or -not $resp.success) { Write-Warn "  Skipping $($acct.Name) - API error"; continue }
 
-    Write-Host "`n========== Step 3: Deploy new projects ==========" -ForegroundColor Cyan
-    Deploy-Projects
+        $projects = $resp.result
+        if ($projects.Count -eq 0) { Write-Info "  No projects found for $($acct.Name)"; continue }
 
-    Write-Host "`n=============== Full Workflow Complete ===============" -ForegroundColor Green
+        # Display projects for this account
+        Write-Host "`nProjects for $($acct.Name):" -ForegroundColor Cyan
+        $projItems = @()
+        $idx = 0
+        foreach ($proj in $projects) {
+            $idx++
+            $domains = ($proj.domains | Where-Object { $_ -ne "$($proj.name).pages.dev" }) -join ', '
+            $domainStr = if ($domains) { " | domains: $domains" } else { '' }
+            $projItems += [PSCustomObject]@{
+                Index = $idx
+                ProjectName = $proj.name
+                Domains = $proj.domains
+                AccountId = $acct.AccountId
+                Token = $acct.Token
+            }
+            Write-Host "  [$idx] $($proj.name)$domainStr" -ForegroundColor White
+        }
+        Write-Host '  [A]ll'
+        Write-Host '  [Q]uit'
+        Write-Host ''
+
+        $sel = Read-Host "Enter number(s) to delete (e.g. '1,3' or '1-3'), [A]ll, or Enter to skip"
+        if ($sel -match '^[Qq]$' -or [string]::IsNullOrWhiteSpace($sel)) { Write-Info "  Skipped $($acct.Name)"; continue }
+
+        $selectedProjs = @()
+        if ($sel -match '^[Aa]$') { $selectedProjs = $projItems }
+        else {
+            $sel -split ',' | ForEach-Object { $_.Trim() } | ForEach-Object {
+                if ($_ -match '^(\d+)-(\d+)$') {
+                    $start, $end = [int]$Matches[1], [int]$Matches[2]
+                    $selectedProjs += $projItems | Where-Object { $_.Index -ge $start -and $_.Index -le $end }
+                } elseif ($_ -match '^\d+$') {
+                    $n = [int]$_
+                    $selectedProjs += $projItems | Where-Object { $_.Index -eq $n }
+                }
+            }
+        }
+        $selectedProjs = $selectedProjs | Sort-Object Index -Unique
+        if ($selectedProjs.Count -eq 0) { Write-Info "  No valid selection for $($acct.Name)"; continue }
+
+        Write-Warn "  About to delete $($selectedProjs.Count) project(s) and their custom domains"
+        $confirm = Read-Host "Type 'yes' to confirm"
+        if ($confirm -ne 'yes') { Write-Info "  Cancelled for $($acct.Name)"; continue }
+
+        # Delete each selected project: domains first, then project
+        foreach ($item in $selectedProjs) {
+            Write-Host "`n  --- $($item.ProjectName) ---" -ForegroundColor Magenta
+
+            # Delete custom domains
+            $customDomains = $item.Domains | Where-Object { $_ -ne "$($item.ProjectName).pages.dev" }
+            foreach ($d in $customDomains) {
+                Write-Info "  Deleting domain '$d' ..."
+                $uri = "https://api.cloudflare.com/client/v4/accounts/$($item.AccountId)/pages/projects/$($item.ProjectName)/domains/$d"
+                $resp = Invoke-CfApi -Method Delete -Uri $uri -Token $item.Token
+                if ($resp -and $resp.success) { Write-Ok "    Deleted domain $d" }
+                else { Write-Warn "    Domain delete may have failed: $d" }
+            }
+
+            # Check deployment count before project deletion
+            $depUri = "https://api.cloudflare.com/client/v4/accounts/$($item.AccountId)/pages/projects/$($item.ProjectName)/deployments"
+            $depResp = Invoke-CfApi -Method Get -Uri $depUri -Token $item.Token
+            if ($depResp -and $depResp.success -and $depResp.result.Count -gt 50) {
+                Write-Warn "    Project has $($depResp.result.Count) deployments"
+                $clean = Read-Host "    Delete old deployments first? (required for 100+) [y/N]"
+                if ($clean -match '^[Yy]$') {
+                    $sorted = $depResp.result | Sort-Object -Property created_on -Descending
+                    $toDelete = $sorted[1..($sorted.Count - 1)]
+                    $delCount = 0
+                    foreach ($dep in $toDelete) {
+                        $dUri = "https://api.cloudflare.com/client/v4/accounts/$($item.AccountId)/pages/projects/$($item.ProjectName)/deployments/$($dep.id)"
+                        $dResp = Invoke-CfApi -Method Delete -Uri $dUri -Token $item.Token
+                        if ($dResp -and $dResp.success) { $delCount++ }
+                        Start-Sleep -Milliseconds 100
+                    }
+                    Write-Ok "    Cleaned $delCount deployment(s)"
+                }
+            }
+
+            # Delete project
+            Write-Info "  Deleting project '$($item.ProjectName)' ..."
+            $uri = "https://api.cloudflare.com/client/v4/accounts/$($item.AccountId)/pages/projects/$($item.ProjectName)"
+            $resp = Invoke-CfApi -Method Delete -Uri $uri -Token $item.Token
+            if ($resp -and $resp.success) { Write-Ok "  Deleted $($item.ProjectName)" }
+            else { Write-Err "  Failed: $($item.ProjectName)" }
+        }
+
+        # After projects done, offer KV namespace deletion
+        Write-Host "`n--- KV Namespaces for $($acct.Name) ---" -ForegroundColor Cyan
+        $kvResp = Invoke-CfApi -Method Get -Uri "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/storage/kv/namespaces" -Token $acct.Token
+        if ($kvResp -and $kvResp.success -and $kvResp.result.Count -gt 0) {
+            Write-Info "  Found $($kvResp.result.Count) KV namespace(s)"
+            $deleteKv = Read-Host "  Delete KV namespaces? [y/N]"
+            if ($deleteKv -match '^[Yy]$') {
+                # Call existing Remove-KvNamespaces or inline
+                Remove-KvNamespaces
+            }
+        } else {
+            Write-Info "  No KV namespaces found"
+        }
+    }
+
+    Write-Host "`n========== Delete Workflow Complete ==========" -ForegroundColor Green
 }
 
 # ================================================================
@@ -817,59 +919,27 @@ do {
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host '          Cloudflare Pages Manager' -ForegroundColor Cyan
     Write-Host '====================================================' -ForegroundColor Cyan
-    Write-Host '  1.  Sync .env with Cloudflare state'
-    Write-Host '  2.  Delete custom domain(s)          (fetches real-time from CF)'
-    Write-Host '  3.  Add custom domain(s)              (from .env DOMAIN)'
-    Write-Host '  4.  Delete project(s)                 (fetches real-time from CF)'
-    Write-Host '  5.  Create project(s)                 (from .env PROJECT_NAME)'
-    Write-Host '  6.  Deploy project(s)                 (create + config + KV + domain + upload)'
-    Write-Host '  7.  Full workflow                     (delete old → deploy new)'
-    Write-Host '  Q.  Quit'
+    Write-Host '  1.  批量删除    查询 CF → 删除自定义域 + 项目 + KV'
+    Write-Host '  2.  批量部署    创建/更新 Pages 项目并上传源码'
+    Write-Host '  Q.  退出'
     Write-Host '====================================================' -ForegroundColor Cyan
 
-    $choice = Read-Host 'Choice'
+    $choice = Read-Host '请选择'
 
     switch -Regex ($choice) {
         '^[Qq]$'       { break }
         '^1$'          {
-            Sync-EnvState
-            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
+            Delete-Workflow
+            Write-Host "`n按 Enter 返回菜单 ..." -ForegroundColor DarkGray
             try { [Console]::In.ReadLine() | Out-Null } catch { }
         }
         '^2$'          {
-            Remove-CustomDomains
-            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
-            try { [Console]::In.ReadLine() | Out-Null } catch { }
-        }
-        '^3$'          {
-            $accts = Select-Accounts
-            if ($accts) { Add-CustomDomains -Accounts $accts }
-            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
-            try { [Console]::In.ReadLine() | Out-Null } catch { }
-        }
-        '^4$'          {
-            Remove-Projects
-            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
-            try { [Console]::In.ReadLine() | Out-Null } catch { }
-        }
-        '^5$'          {
-            $accts = Select-Accounts
-            if ($accts) { New-Projects -Accounts $accts }
-            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
-            try { [Console]::In.ReadLine() | Out-Null } catch { }
-        }
-        '^6$'          {
             Deploy-Projects
-            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
-            try { [Console]::In.ReadLine() | Out-Null } catch { }
-        }
-        '^7$'          {
-            Full-Workflow
-            Write-Host "`nPress Enter to continue ..." -ForegroundColor DarkGray
+            Write-Host "`n按 Enter 返回菜单 ..." -ForegroundColor DarkGray
             try { [Console]::In.ReadLine() | Out-Null } catch { }
         }
         default        {
-            Write-Warn 'Invalid choice'
+            Write-Warn '无效选择，请重新输入'
             Start-Sleep -Seconds 1
         }
     }
