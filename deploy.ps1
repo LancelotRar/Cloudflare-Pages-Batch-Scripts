@@ -27,8 +27,29 @@ function Invoke-CfApi {
     $headers = @{'Authorization' = "Bearer $Token"; 'Content-Type' = 'application/json'}
     $params = @{ Method = $Method; Uri = $Uri; Headers = $headers; UseBasicParsing = $true }
     if ($Body) { $params['Body'] = ($Body | ConvertTo-Json -Depth 5 -Compress) }
-    try { return Invoke-RestMethod @params }
-    catch { Write-Err "API call failed: $_"; return $null }
+    $backoff = @(2, 4, 8)
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try { return Invoke-RestMethod @params }
+        catch {
+            $ex = $_.Exception
+            $isTransient = $false
+            if ($ex -is [System.Net.WebException]) {
+                $statusCode = [int]$ex.Response.StatusCode
+                if ($statusCode -ge 500 -or $ex.Status -eq [System.Net.WebExceptionStatus]::Timeout -or $ex.Status -eq [System.Net.WebExceptionStatus]::ConnectFailure -or $ex.Status -eq [System.Net.WebExceptionStatus]::NameResolutionFailure) {
+                    $isTransient = $true
+                }
+            } elseif ($ex -is [System.TimeoutException] -or $ex -is [System.Net.Http.HttpRequestException]) {
+                $isTransient = $true
+            }
+            if ($isTransient -and $attempt -lt 3) {
+                Write-Warn "Retry $attempt/3: $_"
+                Start-Sleep -Seconds $backoff[$attempt - 1]
+            } else {
+                Write-Err "API call failed: $_"
+                return $null
+            }
+        }
+    }
 }
 
 # ================================================================
@@ -221,6 +242,13 @@ function Remove-CustomDomains {
     if (-not $accounts) { return }
 
     Write-Host "`n========== Fetching actual domains from Cloudflare ==========" -ForegroundColor Yellow
+    Write-Warn "======================================================"
+    Write-Warn "IMPORTANT: Before deleting custom domains"
+    Write-Warn "------------------------------------------------------"
+    Write-Warn "1. Remove the CNAME record from your DNS provider FIRST"
+    Write-Warn "2. Then delete the domain here via CF API"
+    Write-Warn "3. If you skip step 1, the domain won't actually be removable from CF"
+    Write-Warn "======================================================"
 
     # Collect all domains across all accounts
     $domainItems = @()  # each: @{ Index, AccountName, AccountId, Token, ProjectName, DomainName }
@@ -294,6 +322,7 @@ function Remove-CustomDomains {
         if ($resp -and $resp.success) { Write-Ok "  Deleted $($item.DomainName)" }
         else { Write-Err "  Failed: $($item.DomainName)" }
     }
+    Write-Ok "Remember to verify DNS CNAME records are cleaned up"
 }
 
 function Add-CustomDomains {
