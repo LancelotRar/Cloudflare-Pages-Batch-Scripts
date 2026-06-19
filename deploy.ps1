@@ -84,7 +84,7 @@ function Get-Accounts {
                 ProjectType   = 'production'
                 Domain        = ''
                 KvvNamespaceId = $null
-                KvvBinding    = 'KV'
+                KvvBinding    = $null
                 Vars          = [ordered]@{}
             }
             continue
@@ -784,13 +784,18 @@ function Deploy-Projects {
         # ═══════════════════════════════════════════
         Write-Info "  [3/4] 正在配置项目 ..."
 
-        # Create KV namespace and bind (only if both namespace ID and binding name are configured)
-        if ($acct.KvvNamespaceId -and $acct.KvvBinding) {
+        # Create KV namespace if ID is configured (regardless of binding name)
+        if ($acct.KvvNamespaceId) {
             $nsId = Ensure-KvNamespace -AccountId $acct.AccountId -Token $acct.Token -Title $acct.KvvNamespaceId
-            if (-not $nsId) { Write-Warn "  跳过 KV 绑定（命名空间创建失败）"; continue }
+            if (-not $nsId) { Write-Warn "  KV 命名空间创建失败"; continue }
             $acct.KvvNamespaceId = $nsId
+            if ($acct.KvvBinding) {
+                Write-Ok "  KV 命名空间已就绪，将绑定为 '$($acct.KvvBinding)'"
+            } else {
+                Write-Info "  KV 命名空间已创建，未配置绑定名，跳过绑定"
+            }
         } else {
-            Write-Info "  未配置 KV 命名空间或绑定名，跳过"
+            Write-Info "  未配置 KV 命名空间，跳过"
         }
 
         # Set config (env vars + KV binding) via PATCH
