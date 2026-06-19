@@ -63,7 +63,7 @@ Your next move: 审阅并批准本计划，然后执行 `$start-work`。
 
 ## Todos
 
-- [ ] 1. `Invoke-CfApi` — Add retry logic (3 attempts, 2s delay, exponential backoff)
+- [x] 1. `Invoke-CfApi` — Add retry logic (3 attempts, 2s delay, exponential backoff)
   What to do / Must NOT do:
   - Modify the existing `Invoke-CfApi` function (deploy.ps1:25-32)
   - Wrap the `Invoke-RestMethod` call in a retry loop: try 3 times with 2s/4s/8s backoff
@@ -81,7 +81,7 @@ Your next move: 审阅并批准本计划，然后执行 `$start-work`。
     - Failure: Simulate unreachable endpoint — function returns `$null` after 3 retries
   Commit: Y | `refactor(deploy): add retry logic to Invoke-CfApi with 3-attempt backoff`
 
-- [ ] 2. `Remove-KvNamespaces` — New function: query KV namespaces from CF, interactive select, batch delete
+- [x] 2. `Remove-KvNamespaces` — New function: query KV namespaces from CF, interactive select, batch delete
   What to do / Must NOT do:
   - Add a new function `Remove-KvNamespaces` (insert near existing Remove-Projects, ~line 400)
   - For each selected account (call Get-Accounts internally, show account picker), query all KV namespaces: `GET /accounts/{accountId}/storage/kv/namespaces`
@@ -109,7 +109,7 @@ Your next move: 审阅并批准本计划，然后执行 `$start-work`。
     - Edge: No KV namespaces → "No KV namespaces found" message
   Commit: Y | `feat(deploy): add Remove-KvNamespaces function for batch KV deletion`
 
-- [ ] 3. `Get-ProjectDeployments` + deployment cleanup in `Remove-Projects` — Handle 100+ deployments edge case
+- [x] 3. `Get-ProjectDeployments` + deployment cleanup in `Remove-Projects` — Handle 100+ deployments edge case
   What to do / Must NOT do:
   - Add `Get-ProjectDeployments` helper function: `GET /accounts/{accountId}/pages/projects/{projectName}/deployments`
     - Accept AccountId, Token, ProjectName parameters
@@ -141,7 +141,7 @@ Your next move: 审阅并批准本计划，然后执行 `$start-work`。
     - Edge: User declines deployment cleanup → project deletion skipped, warning shown
   Commit: Y | `feat(deploy): add deployment cleanup before project deletion for 100+ edge case`
 
-- [ ] 4. `Remove-CustomDomains` — Add CNAME prerequisite warning
+- [x] 4. `Remove-CustomDomains` — Add CNAME prerequisite warning
   What to do / Must NOT do:
   - Modify `Remove-CustomDomains` (deploy.ps1:214-297)
   - Before the selection display, add a prominent warning block:
@@ -167,7 +167,7 @@ Your next move: 审阅并批准本计划，然后执行 `$start-work`。
     - Edge: No custom domains found → warning not shown (early return)
   Commit: Y | `refactor(deploy): add CNAME prerequisite warning to Remove-CustomDomains`
 
-- [ ] 5. Restructure main menu — Simplify to exactly 2 options
+- [x] 5. Restructure main menu — Simplify to exactly 2 options
   What to do / Must NOT do:
   - Modify the main menu loop (deploy.ps1:650-711)
   - New menu:
@@ -227,7 +227,7 @@ Your next move: 审阅并批准本计划，然后执行 `$start-work`。
     - Edge: Q exits immediately
   Commit: Y | `refactor(deploy): simplify menu to 2 options (Delete/Deploy)`
 
-- [ ] 6. Final integration — Wire all new functions into Delete Workflow, test end-to-end
+- [x] 6. Final integration — Wire all new functions into Delete Workflow, test end-to-end
   What to do / Must NOT do:
   - Ensure `Delete-Workflow` properly calls: Select-Accounts → per-account: Remove-CustomDomains → Remove-Projects (with deployment cleanup) → optional Remove-KvNamespaces
   - Ensure the deployment cleanup (task 3) is correctly triggered inside Remove-Projects
@@ -244,7 +244,7 @@ Your next move: 审阅并批准本计划，然后执行 `$start-work`。
     - Failure: Any syntax error → fix immediately
   Commit: Y | `refactor(deploy): final integration of Delete Workflow with KV and deployment cleanup`
 
-- [ ] 7. Post-refactor cleanup — Remove any dead code or stale comments
+- [x] 7. Post-refactor cleanup — Remove any dead code or stale comments
   What to do / Must NOT do:
   - Check for unused variables, orphaned comments referencing old menu items
   - Update script header `.SYNOPSIS` and `.DESCRIPTION` to reflect new structure

@@ -712,53 +712,70 @@ function Set-ProjectConfig {
 function Deploy-Projects {
     <#
     .SYNOPSIS
-        Deploy selected accounts: create/update project, set vars, bind KV, set domain, upload source.
+        Deploy selected accounts: double-upload workflow for Pages projects.
+        First upload creates/deploys the project, config is applied, then second upload ensures config takes effect.
     #>
     $accts = Select-Accounts
     if (-not $accts) { return }
 
     Write-Host "`n========== Deploy Projects ==========" -ForegroundColor Magenta
-    Write-Host 'This will:' -ForegroundColor White
-    Write-Host '  1. Prepare deployment source files'
-    Write-Host '  2. Create/update projects (from .env PROJECT_NAME)'
-    Write-Host '  3. Set environment variables (UUID, ADMIN, etc.)'
-    Write-Host '  4. Ensure KV namespace exists and bind to project'
-    Write-Host '  5. Set custom domain (from .env DOMAIN)'
-    Write-Host '  6. Upload source files via wrangler'
+    Write-Host 'This will for each account:' -ForegroundColor White
+    Write-Host '  1. First upload:   wrangler pages deploy (create project + deploy source)'
+    Write-Host '  2. Configure:      create KV namespace → set env vars + KV binding → set custom domain'
+    Write-Host '  3. Second upload:  wrangler pages deploy (re-deploy with config applied)'
     Write-Host ''
 
-    # Step 1: Prepare source
+    # Step 1: Prepare source (shared across all accounts)
     Write-Host '>> Preparing source files ...' -ForegroundColor Cyan
     $sourceDir = Prepare-Source
     if (-not $sourceDir) { return }
 
-    # Step 2-6: Process each account
     foreach ($acct in $accts) {
         Write-Host "`n--- $($acct.Name) → $($acct.Project) ---" -ForegroundColor Magenta
 
-        # Check if project exists
-        $uri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$($acct.Project)"
-        $existing = Invoke-CfApi -Method Get -Uri $uri -Token $acct.Token
-
-        if (-not $existing -or -not $existing.success) {
-            Write-Info "  Creating project '$($acct.Project)' ..."
-            $resp = Invoke-CfApi -Method Post -Uri "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects" -Token $acct.Token -Body @{ name = $acct.Project }
-            if (-not $resp -or -not $resp.success) { Write-Err "  Failed to create project"; continue }
-            Write-Ok "  Project '$($acct.Project)' created"
-        } else {
-            Write-Info "  Project '$($acct.Project)' exists"
+        # ═══════════════════════════════════════════
+        # STEP 1: First upload — create project + deploy source
+        # ═══════════════════════════════════════════
+        Write-Info "  [1/3] First upload: deploying source to '$($acct.Project)' ..."
+        $firstOk = $false
+        try {
+            $raw = & wrangler pages deploy $sourceDir --project-name $acct.Project 2>&1
+            $text = $raw -join "`n"
+            Write-Host $text -ForegroundColor DarkGray
+            if ($text -match 'Deployment complete' -or $text -match 'Success') {
+                Write-Ok "  First upload complete"
+                $firstOk = $true
+            } else {
+                # Could be first creation - check if project now exists
+                $checkUri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$($acct.Project)"
+                $check = Invoke-CfApi -Method Get -Uri $checkUri -Token $acct.Token
+                if ($check -and $check.success) {
+                    Write-Ok "  Project '$($acct.Project)' exists after upload"
+                    $firstOk = $true
+                } else {
+                    Write-Err "  First upload may have failed - check output above"
+                    continue
+                }
+            }
+        } catch {
+            Write-Err "  First upload exception: $_"
+            continue
         }
 
-        # Ensure KV namespace
+        # ═══════════════════════════════════════════
+        # STEP 2: Configure — KV namespace, env vars, domain
+        # ═══════════════════════════════════════════
+        Write-Info "  [2/3] Configuring project ..."
+
+        # Ensure KV namespace exists
         $kvTitle = "$($acct.Project)-kv"
         $nsId = Ensure-KvNamespace -AccountId $acct.AccountId -Token $acct.Token -NamespaceId $acct.KvvNamespaceId -Title $kvTitle
-        if (-not $nsId) { Write-Warn "  Skipping KV binding"; continue }
+        if (-not $nsId) { Write-Warn "  Skipping KV binding (namespace creation failed)"; continue }
         $acct.KvvNamespaceId = $nsId
 
-        # Set config (env vars + KV binding)
-        Write-Info '  Setting project configuration ...'
+        # Set config (env vars + KV binding) via PATCH
         $ok = Set-ProjectConfig -Account $acct -ProjectName $acct.Project
-        if (-not $ok) { Write-Warn '  Config may be incomplete' }
+        if (-not $ok) { Write-Warn '  Config may be incomplete - continuing anyway' }
 
         # Set custom domain
         if ($acct.Domain) {
@@ -769,15 +786,22 @@ function Deploy-Projects {
             else { Write-Warn "  Domain add may have failed or already exists" }
         }
 
-        # Upload source via wrangler
-        Write-Info '  Uploading source files ...'
+        # ═══════════════════════════════════════════
+        # STEP 3: Second upload — redeploy with config applied
+        # ═══════════════════════════════════════════
+        Write-Info "  [3/3] Second upload: redeploying with config ..."
         try {
             $raw = & wrangler pages deploy $sourceDir --project-name $acct.Project 2>&1
             $text = $raw -join "`n"
             Write-Host $text -ForegroundColor DarkGray
-            if ($text -match 'Deployment complete') { Write-Ok "  Deployed to $($acct.Project)" }
-            else { Write-Err "  Deploy may have failed - check output above" }
-        } catch { Write-Err "  Deploy exception: $_" }
+            if ($text -match 'Deployment complete' -or $text -match 'Success') {
+                Write-Ok "  ✅ Project '$($acct.Project)' fully deployed and configured"
+            } else {
+                Write-Err "  Second upload may have failed - check output above"
+            }
+        } catch {
+            Write-Err "  Second upload exception: $_"
+        }
     }
 
     Write-Host "`n========== Deploy Complete ==========" -ForegroundColor Green
