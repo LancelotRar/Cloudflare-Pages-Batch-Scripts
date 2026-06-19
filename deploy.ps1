@@ -728,9 +728,10 @@ function Deploy-Projects {
 
     Write-Host "`n========== 部署项目 ==========" -ForegroundColor Magenta
     Write-Host '将对每个账号依次执行：' -ForegroundColor White
-    Write-Host '  1. 首次上传： wrangler pages deploy（创建项目 + 部署源码）'
-    Write-Host '  2. 配置项目： 创建 KV 命名空间 → 设置环境变量 + KV 绑定 → 添加自定义域名'
-    Write-Host '  3. 二次上传： wrangler pages deploy（配置生效后重新部署）'
+    Write-Host '  1. 确保项目存在（通过 CF API 创建）'
+    Write-Host '  2. 首次上传： wrangler pages deploy（部署源码）'
+    Write-Host '  3. 配置项目： 创建 KV 命名空间 → 设置环境变量 + KV 绑定 → 添加自定义域名'
+    Write-Host '  4. 二次上传： wrangler pages deploy（配置生效后重新部署）'
     Write-Host ''
 
     # Step 1: Prepare source (shared across all accounts)
@@ -742,9 +743,29 @@ function Deploy-Projects {
         Write-Host "`n--- $($acct.Name) → $($acct.Project) ---" -ForegroundColor Magenta
 
         # ═══════════════════════════════════════════
-        # STEP 1: First upload — create project + deploy source
+        # STEP 0: Ensure project exists via CF API (wrangler can't create projects non-interactively)
         # ═══════════════════════════════════════════
-        Write-Info "  [1/3] 首次上传：部署源码到 '$($acct.Project)' ..."
+        Write-Info "  [1/4] 检查项目 '$($acct.Project)' 是否存在 ..."
+        $checkUri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$($acct.Project)"
+        $check = Invoke-CfApi -Method Get -Uri $checkUri -Token $acct.Token
+        if ($check -and $check.success) {
+            Write-Ok "  项目已存在"
+        } else {
+            Write-Info "  项目不存在，正在通过 API 创建 ..."
+            $createUri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects"
+            $create = Invoke-CfApi -Method Post -Uri $createUri -Token $acct.Token -Body @{ name = $acct.Project }
+            if ($create -and $create.success) {
+                Write-Ok "  项目已创建"
+            } else {
+                Write-Err "  项目创建失败"
+                continue
+            }
+        }
+
+        # ═══════════════════════════════════════════
+        # STEP 1: First upload — deploy source (project already exists)
+        # ═══════════════════════════════════════════
+        Write-Info "  [2/4] 首次上传：部署源码到 '$($acct.Project)' ..."
         $firstOk = $false
         try {
             $raw = & wrangler pages deploy $sourceDir --project-name $acct.Project 2>&1
@@ -754,16 +775,8 @@ function Deploy-Projects {
                 Write-Ok "  首次上传完成"
                 $firstOk = $true
             } else {
-                # Could be first creation - check if project now exists
-                $checkUri = "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects/$($acct.Project)"
-                $check = Invoke-CfApi -Method Get -Uri $checkUri -Token $acct.Token
-                if ($check -and $check.success) {
-                    Write-Ok "  项目 '$($acct.Project)' 上传后已存在"
-                    $firstOk = $true
-                } else {
-                    Write-Err "  首次上传可能失败，请查看上方输出"
-                    continue
-                }
+                Write-Err "  首次上传失败，请查看上方输出"
+                continue
             }
         } catch {
             Write-Err "  首次上传异常：$_"
@@ -771,9 +784,9 @@ function Deploy-Projects {
         }
 
         # ═══════════════════════════════════════════
-        # STEP 2: Configure — KV namespace, env vars, domain
+        # STEP 3: Configure — KV namespace, env vars, domain
         # ═══════════════════════════════════════════
-        Write-Info "  [2/3] 正在配置项目 ..."
+        Write-Info "  [3/4] 正在配置项目 ..."
 
         # Ensure KV namespace exists (by title from .env or fallback to project name)
         $kvTitle = if ($acct.KvvNamespaceId) { $acct.KvvNamespaceId } else { "$($acct.Project)-kv" }
@@ -795,9 +808,9 @@ function Deploy-Projects {
         }
 
         # ═══════════════════════════════════════════
-        # STEP 3: Second upload — redeploy with config applied
+        # STEP 4: Second upload — redeploy with config applied
         # ═══════════════════════════════════════════
-        Write-Info "  [3/3] 二次上传：配置生效后重新部署 ..."
+        Write-Info "  [4/4] 二次上传：配置生效后重新部署 ..."
         try {
             $raw = & wrangler pages deploy $sourceDir --project-name $acct.Project 2>&1
             $text = $raw -join "`n"
