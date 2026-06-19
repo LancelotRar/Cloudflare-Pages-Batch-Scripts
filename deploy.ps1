@@ -350,6 +350,48 @@ function Add-CustomDomains {
     }
 }
 
+function Get-ProjectDeployments {
+    <#
+    .SYNOPSIS
+        List all deployments for a Pages project.
+    #>
+    param([string]$AccountId, [string]$Token, [string]$ProjectName)
+    $uri = "https://api.cloudflare.com/client/v4/accounts/$AccountId/pages/projects/$ProjectName/deployments"
+    $resp = Invoke-CfApi -Method Get -Uri $uri -Token $Token
+    if ($resp -and $resp.success) { return $resp.result }
+    return @()
+}
+
+function Remove-ProjectDeployments {
+    <#
+    .SYNOPSIS
+        Batch delete deployments for a Pages project.
+        Keeps the latest deployment (CF requirement).
+        Rate-limited to 10 deletions/second.
+    #>
+    param([string]$AccountId, [string]$Token, [string]$ProjectName, [array]$Deployments)
+    if ($Deployments.Count -eq 0) { return $true }
+
+    # Keep the latest deployment (CF requirement: cannot delete latest deployment of a branch)
+    $sorted = $Deployments | Sort-Object -Property created_on -Descending
+    $toDelete = $sorted[1..($sorted.Count - 1)]  # skip newest
+
+    if ($toDelete.Count -eq 0) { Write-Info "    Only 1 deployment, skipping cleanup"; return $true }
+
+    Write-Info "    Cleaning $($toDelete.Count) old deployment(s) ..."
+    $success = $true
+    $count = 0
+    foreach ($dep in $toDelete) {
+        $uri = "https://api.cloudflare.com/client/v4/accounts/$AccountId/pages/projects/$ProjectName/deployments/$($dep.id)"
+        $resp = Invoke-CfApi -Method Delete -Uri $uri -Token $Token
+        if (-not $resp -or -not $resp.success) { Write-Warn "      Failed to delete deployment $($dep.id)"; $success = $false }
+        else { $count++ }
+        Start-Sleep -Milliseconds 100  # rate limit
+    }
+    Write-Ok "    Deleted $count deployment(s)"
+    return $success
+}
+
 function Remove-Projects {
     <#
     .SYNOPSIS
@@ -420,11 +462,105 @@ function Remove-Projects {
 
     Write-Host "`n==================== Deleting ====================" -ForegroundColor Yellow
     foreach ($item in $selectedItems) {
-        Write-Info "Deleting project '$($item.ProjectName)' ..."
+        Write-Info "Processing '$($item.ProjectName)' ..."
+
+        # Check deployment count
+        $deployments = Get-ProjectDeployments -AccountId $item.AccountId -Token $item.Token -ProjectName $item.ProjectName
+        if ($deployments.Count -gt 50) {
+            Write-Warn "  Project has $($deployments.Count) deployments"
+            $clean = Read-Host "  Delete old deployments first? (required for 100+) [y/N]"
+            if ($clean -match '^[Yy]$') {
+                Remove-ProjectDeployments -AccountId $item.AccountId -Token $item.Token -ProjectName $item.ProjectName -Deployments $deployments
+            }
+        }
+
+        Write-Info "  Deleting project '$($item.ProjectName)' ..."
         $uri = "https://api.cloudflare.com/client/v4/accounts/$($item.AccountId)/pages/projects/$($item.ProjectName)"
         $resp = Invoke-CfApi -Method Delete -Uri $uri -Token $item.Token
         if ($resp -and $resp.success) { Write-Ok "  Deleted $($item.ProjectName)" }
         else { Write-Err "  Failed: $($item.ProjectName)" }
+    }
+}
+
+function Remove-KvNamespaces {
+    <#
+    .SYNOPSIS
+        Query KV namespaces from CF, interactive selection, batch delete.
+        Shows which are bound to existing Pages projects.
+    #>
+    $accounts = Get-Accounts
+    if (-not $accounts) { return }
+
+    Write-Host "`n========== Fetching KV namespaces from Cloudflare ==========" -ForegroundColor Yellow
+
+    # Process one account at a time for clarity
+    foreach ($acct in $accounts) {
+        Write-Info "Querying KV namespaces for $($acct.Name) ..."
+        $resp = Invoke-CfApi -Method Get -Uri "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/storage/kv/namespaces" -Token $acct.Token
+        if (-not $resp -or -not $resp.success) { Write-Warn "  Skipping $($acct.Name) - API error"; continue }
+
+        $namespaces = $resp.result
+        if ($namespaces.Count -eq 0) { Write-Info "  No KV namespaces found for $($acct.Name)"; continue }
+
+        # Also fetch Pages projects to cross-reference bindings
+        $projResp = Invoke-CfApi -Method Get -Uri "https://api.cloudflare.com/client/v4/accounts/$($acct.AccountId)/pages/projects" -Token $acct.Token
+        $boundNsIds = @()
+        if ($projResp -and $projResp.success) {
+            foreach ($proj in $projResp.result) {
+                $kvs = $proj.deployment_configs.production.kv_namespaces
+                if ($kvs) { foreach ($kv in $kvs.PSObject.Properties) { $boundNsIds += $kv.Value.namespace_id } }
+                $kvs = $proj.deployment_configs.preview.kv_namespaces
+                if ($kvs) { foreach ($kv in $kvs.PSObject.Properties) { $boundNsIds += $kv.Value.namespace_id } }
+            }
+        }
+
+        Write-Host "`nKV namespaces for $($acct.Name):" -ForegroundColor Cyan
+        $kvItems = @()
+        $idx = 0
+        foreach ($ns in $namespaces) {
+            $idx++
+            $bound = if ($ns.id -in $boundNsIds) { ' (bound to project)' } else { '' }
+            $kvItems += [PSCustomObject]@{ Index = $idx; AccountId = $acct.AccountId; Token = $acct.Token; NamespaceId = $ns.id; Title = $ns.title; Bound = $bound }
+            Write-Host "  [$idx] $($ns.title)$bound" -ForegroundColor White
+        }
+        Write-Host '  [A]ll'
+        Write-Host '  [Q]uit'
+        Write-Host ''
+
+        $sel = Read-Host "Enter number(s) to delete KV namespaces (e.g. '1,3' or '1-3'), [A]ll, or Enter to skip"
+        if ($sel -match '^[Qq]$' -or [string]::IsNullOrWhiteSpace($sel)) { Write-Info "  Skipped KV deletion for $($acct.Name)"; continue }
+
+        $selectedItems = @()
+        if ($sel -match '^[Aa]$') { $selectedItems = $kvItems }
+        else {
+            $sel -split ',' | ForEach-Object { $_.Trim() } | ForEach-Object {
+                if ($_ -match '^(\d+)-(\d+)$') {
+                    $start, $end = [int]$Matches[1], [int]$Matches[2]
+                    $selectedItems += $kvItems | Where-Object { $_.Index -ge $start -and $_.Index -le $end }
+                } elseif ($_ -match '^\d+$') {
+                    $n = [int]$_
+                    $selectedItems += $kvItems | Where-Object { $_.Index -eq $n }
+                }
+            }
+        }
+        $selectedItems = $selectedItems | Sort-Object Index -Unique
+        if ($selectedItems.Count -eq 0) { Write-Info "  No valid selection for $($acct.Name)"; continue }
+
+        # Check if any selected are bound to projects
+        $hasBound = $selectedItems | Where-Object { $_.Bound -ne '' }
+        if ($hasBound) { Write-Warn "  WARNING: Some selected namespaces are still bound to projects: $($hasBound.Title -join ', ')" }
+
+        Write-Warn "  About to delete $($selectedItems.Count) KV namespace(s)"
+        $confirm = Read-Host "Type 'yes' to confirm"
+        if ($confirm -ne 'yes') { Write-Info "  Cancelled for $($acct.Name)"; continue }
+
+        foreach ($item in $selectedItems) {
+            Write-Info "  Deleting KV namespace '$($item.Title)' ..."
+            $uri = "https://api.cloudflare.com/client/v4/accounts/$($item.AccountId)/storage/kv/namespaces/$($item.NamespaceId)"
+            $resp = Invoke-CfApi -Method Delete -Uri $uri -Token $item.Token
+            if ($resp -and $resp.success) { Write-Ok "    Deleted $($item.Title)" }
+            else { Write-Err "    Failed: $($item.Title)" }
+        }
     }
 }
 
