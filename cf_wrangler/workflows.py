@@ -47,13 +47,17 @@ def prepare_source(cfg: Config) -> Path | None:
         zip_path.write_bytes(resp.content)
 
         extracted = deploy_dir / "extracted"
-        extracted.mkdir()
+        extracted.mkdir(exist_ok=True)
 
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(extracted)
 
+        # Find source directory: use single top-level dir if exists, otherwise root
         dirs = [d for d in extracted.iterdir() if d.is_dir()]
-        src = dirs[0] if dirs else extracted
+        if len(dirs) == 1:
+            src = dirs[0]
+        else:
+            src = extracted
 
         print_ok(f"源码已就绪：{src}")
         return src
@@ -97,15 +101,23 @@ def set_project_config(api: CfApiClient, account: Account) -> bool:
 
 
 def _find_wrangler() -> str | None:
-    """Find wrangler CLI path using PATH resolution."""
+    """Find wrangler CLI path via PATH resolution, with platform fallbacks."""
     wrangler_path = shutil.which("wrangler")
     if wrangler_path:
         return wrangler_path
-    # Try common npm global install paths on Windows
-    for candidate in [
-        rf"C:\Users\{os.environ.get('USERNAME', '')}\AppData\Roaming\npm\wrangler.cmd",
-        "C:\\Program Files\\nodejs\\wrangler.cmd",
-    ]:
+    # Fallback: common npm global install paths
+    candidates = []
+    if os.name == "nt":
+        candidates = [
+            os.path.expanduser(r"~\AppData\Roaming\npm\wrangler.cmd"),
+            r"C:\Program Files\nodejs\wrangler.cmd",
+        ]
+    else:
+        candidates = [
+            "/usr/local/bin/wrangler",
+            os.path.expanduser("~/.npm-global/bin/wrangler"),
+        ]
+    for candidate in candidates:
         if os.path.isfile(candidate):
             return candidate
     return None
@@ -145,10 +157,7 @@ def _run_wrangler(source_dir: Path, project: str, token: str, account_id: str, s
         for line in output.splitlines():
             print(f"    {line}")
 
-        if "Deployment complete" in output or "Success" in output:
-            return True
-        else:
-            return False
+        return result.returncode == 0
     except subprocess.TimeoutExpired:
         print_error(f"  {step_label}超时")
         return False
