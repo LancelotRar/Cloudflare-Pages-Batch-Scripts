@@ -1,0 +1,24 @@
+files_to_redeploy:
+  dir: files-to-redeploy
+  download_url: https://example.com/source.zip
+
+accounts:
+  - name: my-account
+    enabled: true
+    token: cfat_xxx
+    account_id: xxxxxx
+    pages:
+      project_name: my-project
+      domain: my-domain.com
+      kv_create: true
+      kv_namespace: my-kv
+      kv_binding: true
+      kv_binding_env: KV
+      project_type: production
+    env:
+      - name: UUID
+        type: plain_text
+        value: xxxxxxxx
+      - name: ADMIN
+        type: plain_text
+        value: admin
