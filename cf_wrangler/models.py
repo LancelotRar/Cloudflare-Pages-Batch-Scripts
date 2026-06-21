@@ -26,7 +26,7 @@ class Account:
     """一个 Cloudflare 账号下的 Pages 项目配置"""
     name: str
     enabled: bool
-    token: str
+    token: str = field(repr=False)  # 敏感字段，不在 repr 中泄露
     account_id: str
     pages: PagesConfig
     env: list[EnvVar] = field(default_factory=list)

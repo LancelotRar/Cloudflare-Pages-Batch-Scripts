@@ -46,6 +46,10 @@ def prepare_source(cfg: Config) -> Path | None:
         zip_path = deploy_dir / "source.zip"
         zip_path.write_bytes(resp.content)
 
+        # 基本完整性检查：ZIP 至少应有几百字节
+        if zip_path.stat().st_size < 200:
+            raise ValueError(f"下载文件过小 ({zip_path.stat().st_size} bytes)，可能不是有效的 ZIP")
+
         extracted = deploy_dir / "extracted"
         extracted.mkdir(exist_ok=True)
 
@@ -315,8 +319,10 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
         if not patch_ok:
             print_warn("  项目配置（环境变量/KV绑定）可能未完全生效")
         else:
-            for name in env_to_set:
-                print_ok(f"  变量 {name} 已设置")
+            for ev in active_env:
+                if ev.name in env_to_set:
+                    val_desc = "已设置（secret）" if ev.type == "secret_text" else "已设置"
+                    print_ok(f"  变量 {ev.name} {val_desc}")
             if kv_needs_binding:
                 print_ok("  KV 变量已设置")
                 print_ok("  KV 已绑定")
