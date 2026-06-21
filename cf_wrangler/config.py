@@ -32,7 +32,8 @@ def load_config(path: Path | None = None) -> Config:
     )
     
     accounts: list[Account] = []
-    for raw_acct in raw.get("accounts", []):
+    raw_accounts = raw.get("accounts", []) if raw else []
+    for raw_acct in raw_accounts:
         raw_pages = raw_acct.get("pages", {})
         pages = PagesConfig(
             project_name=raw_pages.get("project_name", ""),
