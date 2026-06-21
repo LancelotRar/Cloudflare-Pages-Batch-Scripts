@@ -391,11 +391,8 @@ def deploy_workflow(cfg: Config):
     source_dir = source_dir.resolve()
 
     for account in selected:
-        api = CfApiClient(account.account_id, account.token)
-        try:
+        with CfApiClient(account.account_id, account.token) as api:
             deploy_project(api, account, source_dir)
-        finally:
-            api.close()
 
     print_ok("========== 部署完成 ==========")
     wait_enter()
@@ -458,8 +455,7 @@ def delete_workflow(cfg: Config):
     print()
 
     for account in selected_accounts:
-        api = CfApiClient(account.account_id, account.token)
-        try:
+        with CfApiClient(account.account_id, account.token) as api:
             print_header(f"--- {account.name} ---")
 
             print_info("正在查询项目 ...")
@@ -570,8 +566,6 @@ def delete_workflow(cfg: Config):
                                     print_error(f"    失败：{kv['title']}")
             else:
                 print_info("  未找到 KV 命名空间")
-        finally:
-            api.close()
 
     print_ok("========== 删除完成 ==========")
     wait_enter()
