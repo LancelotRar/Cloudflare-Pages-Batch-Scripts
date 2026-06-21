@@ -39,13 +39,20 @@ cd CF-wrangler
 
 # 2. 安装 Python 依赖
 pip install pyyaml httpx rich
+
+# 3. 初始化配置文件（从模板复制）
+cp config.yaml.example config.yaml
+# Windows: copy config.yaml.example config.yaml
 ```
 
 无需虚拟环境，依赖直接安装到系统 Python 即可。
 
 ## 配置文件
 
-编辑 `config.yaml`，配置你的 Cloudflare 账号和 Pages 项目。
+编辑 `config.yaml`（从 `config.yaml.example` 复制而来），配置你的 Cloudflare 账号和 Pages 项目。
+
+> ⚠️ `config.yaml` 包含 API Token 等敏感信息，已被加入 `.gitignore`，不会提交到 git 仓库。
+> 首次使用请从 `config.yaml.example` 复制一份。
 
 ```yaml
 files_to_redeploy:
@@ -150,15 +157,35 @@ Q. 退出
 ```
 CF-wrangler/
 ├── cf_wrangler/           # Python 包
-│   ├── __init__.py
+│   ├── __init__.py        # 包入口，导出 main()
 │   ├── __main__.py        # 入口，菜单循环
 │   ├── models.py          # 数据类（Account, PagesConfig, EnvVar）
 │   ├── config.py          # 加载解析 config.yaml
-│   ├── api.py             # Cloudflare REST API 客户端
+│   ├── api.py             # Cloudflare REST API 客户端（含重试逻辑）
 │   ├── ui.py              # 交互界面（Rich 彩色输出）
 │   └── workflows.py       # 部署/删除工作流逻辑
-├── config.yaml            # 配置文件
+├── tests/                 # 测试目录（pytest, 80 个测试用例）
+│   ├── test_models.py
+│   ├── test_config.py
+│   ├── test_api.py
+│   └── test_workflows.py
+├── config.yaml.example    # 配置文件模板（复制为 config.yaml 后使用）
+├── config.yaml            # 用户配置文件（已加入 .gitignore）
 ├── deploy.ps1             # 原有 PowerShell 版本（保留）
-├── pyproject.toml         # Python 项目配置
+├── pyproject.toml         # Python 项目配置（构建/lint/typecheck/测试）
 └── README.md
+```
+
+## 开发
+
+```powershell
+# 安装测试依赖
+pip install pytest pytest-httpx
+
+# 运行全部测试
+python -m pytest tests/ -v
+
+# 代码检查（需安装 ruff）
+pip install ruff
+ruff check cf_wrangler/
 ```
