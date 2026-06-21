@@ -49,7 +49,7 @@ def load_config(path: Path | None = None) -> Config:
         for raw_env in raw_acct.get("env", []):
             env_list.append(EnvVar(
                 name=raw_env.get("name", ""),
-                type=raw_env.get("type", ""),
+                var_type=raw_env.get("type", ""),
                 value=raw_env.get("value", ""),
             ))
         

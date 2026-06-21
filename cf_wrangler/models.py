@@ -1,15 +1,15 @@
 from dataclasses import dataclass, field
 
 
-@dataclass
+@dataclass(frozen=True, slots=True, kw_only=True)
 class EnvVar:
     """环境变量，如 UUID/ADMIN 等"""
     name: str
-    type: str
+    var_type: str  # plain_text 或 secret_text
     value: str
 
 
-@dataclass
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PagesConfig:
     """单个 Pages 项目的配置"""
     project_name: str
@@ -21,7 +21,7 @@ class PagesConfig:
     project_type: str = "production"
 
 
-@dataclass
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Account:
     """一个 Cloudflare 账号下的 Pages 项目配置"""
     name: str
@@ -32,14 +32,14 @@ class Account:
     env: list[EnvVar] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FilesToRedeploy:
     """全局配置：重新部署所需文件"""
     dir: str = "files-to-redeploy"
     download_url: str = ""
 
 
-@dataclass
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Config:
     """顶层配置文件"""
     files_to_redeploy: FilesToRedeploy = field(default_factory=FilesToRedeploy)
