@@ -414,8 +414,9 @@ def parse_selection(sel: str, items: list[dict]) -> list[dict]:
             try:
                 start_str, end_str = part.split("-", 1)
                 start, end = int(start_str.strip()), int(end_str.strip())
+                lo, hi = (start, end) if start <= end else (end, start)
                 selected.extend(
-                    [item for item in items if start <= item["index"] <= end]
+                    [item for item in items if lo <= item["index"] <= hi]
                 )
             except (ValueError, IndexError):
                 continue
