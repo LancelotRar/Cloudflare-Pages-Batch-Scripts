@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Ruff
+.ruff_cache/
+
+# MyPy
+.mypy_cache/
+
+# Project specific
+config.yaml
+.wrangler/
+files-to-redeploy/
+
+# OS
+.DS_Store
+Thumbs.db

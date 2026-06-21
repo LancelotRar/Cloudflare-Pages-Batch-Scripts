@@ -160,58 +160,184 @@ def _run_wrangler(source_dir: Path, project: str, token: str, account_id: str, s
         return False
 
 
+def _check_project_match(api: CfApiClient, project_data: dict, account: Account) -> tuple[bool, list[str]]:
+    """比对项目实际配置与 YAML 是否一致，返回 (是否一致, 差异项列表)。"""
+    diffs: list[str] = []
+
+    # 1. KV 比对
+    if account.pages.kv_binding and account.pages.kv_namespace:
+        ns_id = None
+        for ns in api.list_kv_namespaces():
+            if ns.get("title") == account.pages.kv_namespace:
+                ns_id = ns.get("id")
+                break
+        if not ns_id:
+            diffs.append(f"KV 命名空间 '{account.pages.kv_namespace}' 不存在")
+        else:
+            bound = False
+            for env_type in ["production", "preview"]:
+                kvs = project_data.get("deployment_configs", {}).get(env_type, {}).get("kv_namespaces", {}) or {}
+                for env_name, binding in kvs.items():
+                    if env_name == account.pages.kv_binding_env and binding.get("namespace_id") == ns_id:
+                        bound = True
+            if not bound:
+                diffs.append(f"KV 绑定 '{account.pages.kv_binding_env}' 未配置")
+    elif account.pages.kv_binding:
+        diffs.append("KV 绑定未配置（缺少 kv_namespace）")
+
+    # 2. 域名比对
+    if account.pages.domain:
+        if account.pages.domain not in project_data.get("domains", []):
+            diffs.append(f"域名 '{account.pages.domain}' 未添加")
+
+    # 3. 环境变量比对（空值表示不设置，跳过比对）
+    active_env = [ev for ev in account.env if ev.value]
+    if active_env:
+        dep_configs = project_data.get("deployment_configs", {})
+        pt = account.pages.project_type
+        current_vars: dict = {}
+        # 从 production 或 preview 中收集当前 env_vars
+        for et in [pt] if pt in ("production", "preview") else ["production", "preview"]:
+            if et in dep_configs:
+                current_vars.update(dep_configs[et].get("env_vars", {}) or {})
+        for ev in active_env:
+            actual = current_vars.get(ev.name)
+            if not actual:
+                diffs.append(f"环境变量 '{ev.name}' 未设置")
+            elif actual.get("type") != ev.type:
+                diffs.append(f"环境变量 '{ev.name}' 类型不匹配")
+            elif ev.type != "secret_text" and actual.get("value") != ev.value:
+                diffs.append(f"环境变量 '{ev.name}' 值不一致")
+
+    return len(diffs) == 0, diffs
+
+
 def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool:
     """Full deploy workflow for a single account."""
     project = account.pages.project_name
     print_header(f"部署：{account.name} → {project}")
 
+    # ========== 第一步：检查项目 ==========
     print_info(f"  [1/4] 检查项目 '{project}' 是否存在 ...")
     existing = api.get_project(project)
+
     if existing:
-        print_ok("  项目已存在")
+        # 项目已存在 → 比对配置
+        match, diffs = _check_project_match(api, existing, account)
+        if match:
+            print_ok("  项目配置与 YAML 一致，无需部署")
+            return True
+        print_ok("  项目已存在，但配置有差异，将重新部署")
+        for d in diffs:
+            print_info(f"    → {d}")
     else:
         print_info("  项目不存在，正在通过 API 创建 ...")
         result = api.create_project(project)
-        if result and result.get("success"):
-            print_ok("  项目已创建")
-        else:
+        if not (result and result.get("success")):
             print_error("  项目创建失败")
             return False
+        print_ok("  项目已创建")
 
-    print_info(f"  [2/4] 第 1 次部署：部署源码到 '{project}' ...")
-    first_ok = _run_wrangler(source_dir, project, account.token, account.account_id, "第 1 次部署")
+    # ========== 第二步：上传部署 ==========
+    print_info(f"  [2/4] 上传部署：部署源码到 '{project}' ...")
+    first_ok = _run_wrangler(source_dir, project, account.token, account.account_id, "上传部署")
     if not first_ok:
-        print_error("  第 1 次部署失败，请查看上方输出")
+        print_error("  上传部署失败，请查看上方输出")
         return False
-    print_ok("  第 1 次部署完成")
+    print_ok("  上传部署完成")
 
+    # ========== 第三步：配置项目 ==========
     print_info(f"  [3/4] 正在配置项目 ...")
 
-    if account.pages.kv_create and account.pages.kv_namespace:
-        ns_id = api.ensure_kv_namespace(account.pages.kv_namespace)
-        if ns_id:
-            print_ok(f"  KV 命名空间已就绪")
+    # 收集当前项目配置（用于判断哪些需要实际变更）
+    current_vars: dict[str, dict] = {}
+    # 新项目 KV 需要绑定，已有项目待检测
+    kv_needs_binding = account.pages.kv_binding and not existing
+    if existing:
+        for et in ["production", "preview"]:
+            dep = existing.get("deployment_configs", {}).get(et, {})
+            current_vars.update(dep.get("env_vars", {}) or {})
+
+    # KV 命名空间
+    ns_id = None
+    if account.pages.kv_namespace:
+        all_ns = api.list_kv_namespaces()
+        existing_ns = next((ns for ns in all_ns if ns.get("title") == account.pages.kv_namespace), None)
+        if existing_ns:
+            ns_id = existing_ns.get("id")
+            print_ok(f"  KV 命名空间 '{account.pages.kv_namespace}' 已存在")
+            # 检查该项目是否已绑定此命名空间
+            if account.pages.kv_binding and ns_id and existing:
+                found = False
+                for et in ["production", "preview"]:
+                    kvs = existing.get("deployment_configs", {}).get(et, {}).get("kv_namespaces", {}) or {}
+                    for _, binding in kvs.items():
+                        if binding.get("namespace_id") == ns_id:
+                            found = True
+                            break
+                    if found:
+                        break
+                kv_needs_binding = not found
+        elif account.pages.kv_create:
+            result = api.create_kv_namespace(account.pages.kv_namespace)
+            if result and result.get("success"):
+                ns_id = result["result"].get("id")
+                kv_needs_binding = True
+                print_ok(f"  KV 命名空间 '{account.pages.kv_namespace}' 已创建")
+
+    # 过滤掉值为空的 env（空值 = 不设置该项）
+    active_env = [ev for ev in account.env if ev.value]
+
+    # 判断哪些环境变量需要设置
+    env_to_set: list[str] = []
+    for ev in active_env:
+        actual = current_vars.get(ev.name)
+        if not actual:
+            env_to_set.append(ev.name)
+        elif actual.get("type") != ev.type:
+            env_to_set.append(ev.name)
+        elif ev.type != "secret_text" and actual.get("value") != ev.value:
+            env_to_set.append(ev.name)
+
+    # 有变更时才 PATCH
+    need_patch = bool(env_to_set) or kv_needs_binding
+    if need_patch:
+        patch_ok = set_project_config(api, account)
+        if not patch_ok:
+            print_warn("  项目配置（环境变量/KV绑定）可能未完全生效")
         else:
-            print_warn("  KV 命名空间创建失败")
+            for name in env_to_set:
+                print_ok(f"  变量 {name} 已设置")
+            if kv_needs_binding:
+                print_ok("  KV 变量已设置")
+                print_ok("  KV 已绑定")
+    else:
+        if active_env:
+            for ev in active_env:
+                print_ok(f"  变量 {ev.name} 一致，跳过")
+        if account.pages.kv_binding and account.pages.kv_namespace and not kv_needs_binding:
+            print_ok("  KV 已绑定，一致")
 
-    if not set_project_config(api, account):
-        print_warn("  项目配置（环境变量/KV绑定）可能未完全生效")
-
+    # 自定义域名
     if account.pages.domain:
-        print_info(f"  正在添加域名 '{account.pages.domain}' ...")
-        result = api.add_domain(project, account.pages.domain)
-        if result and result.get("success"):
-            print_ok(f"  域名 '{account.pages.domain}' 已添加")
+        if existing and account.pages.domain in existing.get("domains", []):
+            print_ok(f"  域名 '{account.pages.domain}' 已配置，跳过")
         else:
-            print_warn("  域名添加可能失败或已存在")
+            print_info(f"  正在添加域名 '{account.pages.domain}' ...")
+            result = api.add_domain(project, account.pages.domain)
+            if result and result.get("success"):
+                print_ok(f"  域名 '{account.pages.domain}' 已添加")
+            else:
+                print_warn("  域名添加可能失败或已存在")
 
-    print_info(f"  [4/4] 第 2 次部署：配置生效后重新部署 ...")
-    second_ok = _run_wrangler(source_dir, project, account.token, account.account_id, "第 2 次部署")
+    # ========== 第四步：重新部署（配置生效）==========
+    print_info(f"  [4/4] 重新部署使配置生效 ...")
+    second_ok = _run_wrangler(source_dir, project, account.token, account.account_id, "重新部署")
     if second_ok:
         print_ok(f"  ✅ 项目 '{project}' 已完全部署并配置完成")
         return True
     else:
-        print_error("  第 2 次部署可能失败，请查看上方输出")
+        print_error("  重新部署可能失败，请查看上方输出")
         return False
 
 
@@ -389,6 +515,8 @@ def delete_workflow(cfg: Config):
                 print_info(f"  {account.name} 未找到 Pages 项目，跳过项目删除")
 
             # 无论是否有 Pages 项目，都继续处理 KV 命名空间
+            # 刷新项目列表，确保绑定检测不引用已删除的项目
+            projects = api.list_projects()
             print(f"\n  --- {account.name} 的 KV 命名空间 ---")
             kvs = api.list_kv_namespaces()
             if kvs:
