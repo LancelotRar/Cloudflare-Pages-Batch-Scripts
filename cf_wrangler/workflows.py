@@ -75,7 +75,7 @@ def set_project_config(api: CfApiClient, account: Account) -> bool:
     env_vars = {}
     for ev in account.env:
         if ev.value:
-            env_vars[ev.name] = {"value": ev.value, "type": ev.type}
+            env_vars[ev.name] = {"value": ev.value, "type": ev.var_type}
 
     cfg = {}
     if env_vars:
@@ -217,9 +217,9 @@ def _check_project_match(api: CfApiClient, project_data: dict, account: Account)
             actual = current_vars.get(ev.name)
             if not actual:
                 diffs.append(f"环境变量 '{ev.name}' 未设置")
-            elif actual.get("type") != ev.type:
+            elif actual.get("type") != ev.var_type:
                 diffs.append(f"环境变量 '{ev.name}' 类型不匹配")
-            elif ev.type != "secret_text" and actual.get("value") != ev.value:
+            elif ev.var_type != "secret_text" and actual.get("value") != ev.value:
                 diffs.append(f"环境变量 '{ev.name}' 值不一致")
 
     return len(diffs) == 0, diffs
@@ -307,9 +307,9 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
         actual = current_vars.get(ev.name)
         if not actual:
             env_to_set.append(ev.name)
-        elif actual.get("type") != ev.type:
+        elif actual.get("type") != ev.var_type:
             env_to_set.append(ev.name)
-        elif ev.type != "secret_text" and actual.get("value") != ev.value:
+        elif ev.var_type != "secret_text" and actual.get("value") != ev.value:
             env_to_set.append(ev.name)
 
     # 有变更时才 PATCH
@@ -321,7 +321,7 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
         else:
             for ev in active_env:
                 if ev.name in env_to_set:
-                    val_desc = "已设置（secret）" if ev.type == "secret_text" else "已设置"
+                    val_desc = "已设置（secret）" if ev.var_type == "secret_text" else "已设置"
                     print_ok(f"  变量 {ev.name} {val_desc}")
             if kv_needs_binding:
                 print_ok("  KV 变量已设置")

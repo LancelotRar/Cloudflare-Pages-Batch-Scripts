@@ -30,9 +30,9 @@ class TestModels:
         assert acct.env == []
 
     def test_env_var(self):
-        ev = EnvVar(name="UUID", type="plain_text", value="abc")
+        ev = EnvVar(name="UUID", var_type="plain_text", value="abc")
         assert ev.name == "UUID"
-        assert ev.type == "plain_text"
+        assert ev.var_type == "plain_text"
         assert ev.value == "abc"
 
     def test_config_empty(self):
