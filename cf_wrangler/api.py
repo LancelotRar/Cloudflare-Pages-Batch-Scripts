@@ -8,7 +8,7 @@ CF_API_BASE = "https://api.cloudflare.com/client/v4"
 class CfApiClient:
     """Cloudflare REST API client with retry logic."""
 
-    def __init__(self, account_id: str, token: str):
+    def __init__(self, account_id: str, token: str, timeout: int = 30):
         self.account_id = account_id
         self.token = token
         self._client = httpx.Client(
@@ -16,51 +16,54 @@ class CfApiClient:
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             },
-            timeout=30,
+            timeout=timeout,
         )
 
     def _request(self, method: str, path: str, body: dict | None = None) -> dict | None:
         """Make an API request with retry logic.
-        
-        Retries on 5xx and network errors (up to 3 attempts with 2/4/8s backoff).
-        4xx errors are not retried.
+
+        Retries on transient errors (5xx, 429, network timeouts/errors)
+        up to 3 attempts with 2/4/8s backoff.
+        4xx errors and programming errors are NOT retried and are returned / raised.
         """
         backoff = [2, 4, 8]
         url = f"{CF_API_BASE}/accounts/{self.account_id}{path}"
-        
+
         for attempt in range(3):
             try:
                 resp = self._client.request(method, url, json=body)
                 data = resp.json()
-                
+
                 if resp.status_code >= 400:
                     is_transient = resp.status_code >= 500 or resp.status_code == 429
                     if is_transient and attempt < 2:
                         time.sleep(backoff[attempt])
                         continue
                     return data
-                
+
                 return data
-                
+
             except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError):
                 if attempt < 2:
                     time.sleep(backoff[attempt])
                     continue
                 return None
-            except Exception:
-                if attempt < 2:
-                    time.sleep(backoff[attempt])
-                    continue
-                return None
-        
+
         return None
+
+    @staticmethod
+    def _add_query_param(path: str, param: str, value: object) -> str:
+        """Safely append a query parameter to a path, preserving any existing params."""
+        sep = "&" if "?" in path else "?"
+        return f"{path}{sep}{param}={value}"
 
     def _paginated_get(self, path: str) -> list[dict]:
         """Fetch all pages of a paginated GET endpoint."""
         results: list[dict] = []
         page = 1
         while True:
-            data = self._request("GET", f"{path}?page={page}&per_page=50")
+            url = self._add_query_param(self._add_query_param(path, "page", page), "per_page", 50)
+            data = self._request("GET", url)
             if not data or not data.get("success"):
                 break
             results.extend(data.get("result", []))
