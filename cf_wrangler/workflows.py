@@ -96,8 +96,28 @@ def set_project_config(api: CfApiClient, account: Account) -> bool:
     return api.patch_project_config(account.pages.project_name, dep_cfg)
 
 
+def _find_wrangler() -> str | None:
+    """Find wrangler CLI path using PATH resolution."""
+    wrangler_path = shutil.which("wrangler")
+    if wrangler_path:
+        return wrangler_path
+    # Try common npm global install paths on Windows
+    for candidate in [
+        rf"C:\Users\{os.environ.get('USERNAME', '')}\AppData\Roaming\npm\wrangler.cmd",
+        "C:\\Program Files\\nodejs\\wrangler.cmd",
+    ]:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def _run_wrangler(source_dir: Path, project: str, token: str, account_id: str, step_label: str) -> bool:
     """Run `wrangler pages deploy` and return success status."""
+    wrangler_exe = _find_wrangler()
+    if not wrangler_exe:
+        print_error("  未找到 wrangler CLI，请安装：npm install -g wrangler")
+        return False
+
     env = {
         **os.environ,
         "CLOUDFLARE_API_TOKEN": token,
@@ -106,7 +126,7 @@ def _run_wrangler(source_dir: Path, project: str, token: str, account_id: str, s
     try:
         result = subprocess.run(
             [
-                "wrangler",
+                wrangler_exe,
                 "pages",
                 "deploy",
                 str(source_dir),
@@ -116,11 +136,12 @@ def _run_wrangler(source_dir: Path, project: str, token: str, account_id: str, s
                 "main",
             ],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
             timeout=300,
         )
-        output = result.stdout + result.stderr
+        output = (result.stdout or "") + (result.stderr or "")
         for line in output.splitlines():
             print(f"    {line}")
 
@@ -157,12 +178,12 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
             print_error("  项目创建失败")
             return False
 
-    print_info(f"  [2/4] 首次上传：部署源码到 '{project}' ...")
-    first_ok = _run_wrangler(source_dir, project, account.token, account.account_id, "首次上传")
+    print_info(f"  [2/4] 第 1 次部署：部署源码到 '{project}' ...")
+    first_ok = _run_wrangler(source_dir, project, account.token, account.account_id, "第 1 次部署")
     if not first_ok:
-        print_error("  首次上传失败，请查看上方输出")
+        print_error("  第 1 次部署失败，请查看上方输出")
         return False
-    print_ok("  首次上传完成")
+    print_ok("  第 1 次部署完成")
 
     print_info(f"  [3/4] 正在配置项目 ...")
 
@@ -173,7 +194,8 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
         else:
             print_warn("  KV 命名空间创建失败")
 
-    set_project_config(api, account)
+    if not set_project_config(api, account):
+        print_warn("  项目配置（环境变量/KV绑定）可能未完全生效")
 
     if account.pages.domain:
         print_info(f"  正在添加域名 '{account.pages.domain}' ...")
@@ -183,13 +205,13 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
         else:
             print_warn("  域名添加可能失败或已存在")
 
-    print_info(f"  [4/4] 二次上传：配置生效后重新部署 ...")
-    second_ok = _run_wrangler(source_dir, project, account.token, account.account_id, "二次上传")
+    print_info(f"  [4/4] 第 2 次部署：配置生效后重新部署 ...")
+    second_ok = _run_wrangler(source_dir, project, account.token, account.account_id, "第 2 次部署")
     if second_ok:
         print_ok(f"  ✅ 项目 '{project}' 已完全部署并配置完成")
         return True
     else:
-        print_error("  二次上传可能失败，请查看上方输出")
+        print_error("  第 2 次部署可能失败，请查看上方输出")
         return False
 
 
@@ -201,6 +223,12 @@ def deploy_workflow(cfg: Config):
         wait_enter()
         return
 
+    # 提前检查 wrangler 是否可用，避免下载源码后才发现
+    if not _find_wrangler():
+        print_error("未找到 wrangler CLI，请先安装：npm install -g wrangler")
+        wait_enter()
+        return
+
     selected = select_accounts(accounts)
     if not selected:
         return
@@ -208,9 +236,9 @@ def deploy_workflow(cfg: Config):
     print_header("部署项目")
     print_info("将对每个账号依次执行：")
     print_info("  1. 确保项目存在（通过 CF API 创建）")
-    print_info("  2. 首次上传：wrangler pages deploy（部署源码）")
+    print_info("  2. 第 1 次部署：wrangler pages deploy（部署源码）")
     print_info("  3. 配置项目：创建 KV 命名空间 → 设置环境变量 + KV 绑定 → 添加自定义域名")
-    print_info("  4. 二次上传：wrangler pages deploy（配置生效后重新部署）")
+    print_info("  4. 第 2 次部署：wrangler pages deploy（配置生效后重新部署）")
     print()
 
     print_info(">> 正在准备源码文件 ...")
@@ -295,117 +323,108 @@ def delete_workflow(cfg: Config):
 
             print_info("正在查询项目 ...")
             projects = api.list_projects()
-            if not projects:
-                print_info(f"  {account.name} 未找到项目")
-                continue
 
-            proj_items = []
-            for i, proj in enumerate(projects, 1):
-                name = proj.get("name", "")
-                domains = [
-                    d for d in proj.get("domains", [])
-                    if d != f"{name}.pages.dev"
-                ]
-                domain_str = f" | 域名：{', '.join(domains)}" if domains else ""
-                proj_items.append({
-                    "index": i,
-                    "name": name,
-                    "project": proj,
-                    "domains": domains,
-                })
-                print(f"  [{i}] {name}{domain_str}")
+            if projects:
+                proj_items = []
+                for i, proj in enumerate(projects, 1):
+                    name = proj.get("name", "")
+                    domains = [
+                        d for d in proj.get("domains", [])
+                        if d != f"{name}.pages.dev"
+                    ]
+                    domain_str = f" | 域名：{', '.join(domains)}" if domains else ""
+                    proj_items.append({
+                        "index": i,
+                        "name": name,
+                        "project": proj,
+                        "domains": domains,
+                    })
+                    print(f"  [{i}] {name}{domain_str}")
 
-            print("  [A]ll 全部")
-            print("  [Q]uit 退出")
-            print()
+                print("  [A]ll 全部")
+                print("  [Q]uit 退出")
+                print()
 
-            sel = input("输入序号删除（如 '1,3' 或 '1-3'），[A]ll 全选，回车跳过: ").strip()
-            if not sel or sel.lower() == "q":
-                print_info(f"  跳过 {account.name}")
-                continue
+                sel = input("输入序号删除（如 '1,3' 或 '1-3'），[A]ll 全选，回车跳过: ").strip()
+                if sel and sel.lower() != "q":
+                    selected_projs = parse_selection(sel, proj_items)
+                    if selected_projs:
+                        print_warn(f"  即将删除 {len(selected_projs)} 个项目及其自定义域名")
+                        if confirm("输入 'yes' 确认"):
+                            for item in selected_projs:
+                                proj_name = item["name"]
+                                print(f"\n  --- {proj_name} ---")
 
-            selected_projs = parse_selection(sel, proj_items)
-            if not selected_projs:
-                print_info(f"  未选择有效项目（{account.name}）")
-                continue
+                                for domain in item["domains"]:
+                                    print_info(f"  正在删除域名 '{domain}' ...")
+                                    result = api.delete_domain(proj_name, domain)
+                                    if result and result.get("success"):
+                                        print_ok(f"    已删除域名 {domain}")
+                                    else:
+                                        print_warn(f"    域名删除可能失败：{domain}")
 
-            print_warn(f"  即将删除 {len(selected_projs)} 个项目及其自定义域名")
-            if not confirm("输入 'yes' 确认"):
-                print_info(f"  已取消 {account.name}")
-                continue
+                                deps = api.list_deployments(proj_name)
+                                if len(deps) > 50:
+                                    print_warn(f"    项目有 {len(deps)} 个部署")
+                                    clean = input("    是否先删除旧部署？（超过 50 个需先清理）[y/N]: ").strip().lower()
+                                    if clean == "y":
+                                        sorted_deps = sorted(deps, key=lambda d: d.get("created_on", ""), reverse=True)
+                                        to_delete = sorted_deps[1:]
+                                        del_count = 0
+                                        for dep in to_delete:
+                                            dep_id = dep.get("id", "")
+                                            result = api.delete_deployment(proj_name, dep_id)
+                                            if result and result.get("success"):
+                                                del_count += 1
+                                            time.sleep(0.1)
+                                        print_ok(f"    已清理 {del_count} 个部署")
 
-            for item in selected_projs:
-                proj_name = item["name"]
-                print(f"\n  --- {proj_name} ---")
+                                print_info(f"  正在删除项目 '{proj_name}' ...")
+                                result = api.delete_project(proj_name)
+                                if result and result.get("success"):
+                                    print_ok(f"  已删除 {proj_name}")
+                                else:
+                                    print_error(f"  失败：{proj_name}")
+            else:
+                print_info(f"  {account.name} 未找到 Pages 项目，跳过项目删除")
 
-                for domain in item["domains"]:
-                    print_info(f"  正在删除域名 '{domain}' ...")
-                    result = api.delete_domain(proj_name, domain)
-                    if result and result.get("success"):
-                        print_ok(f"    已删除域名 {domain}")
-                    else:
-                        print_warn(f"    域名删除可能失败：{domain}")
-
-                deps = api.list_deployments(proj_name)
-                if len(deps) > 50:
-                    print_warn(f"    项目有 {len(deps)} 个部署")
-                    clean = input("    是否先删除旧部署？（超过 50 个需先清理）[y/N]: ").strip().lower()
-                    if clean == "y":
-                        sorted_deps = sorted(deps, key=lambda d: d.get("created_on", ""), reverse=True)
-                        to_delete = sorted_deps[1:]
-                        del_count = 0
-                        for dep in to_delete:
-                            dep_id = dep.get("id", "")
-                            result = api.delete_deployment(proj_name, dep_id)
-                            if result and result.get("success"):
-                                del_count += 1
-                            time.sleep(0.1)
-                        print_ok(f"    已清理 {del_count} 个部署")
-
-                print_info(f"  正在删除项目 '{proj_name}' ...")
-                result = api.delete_project(proj_name)
-                if result and result.get("success"):
-                    print_ok(f"  已删除 {proj_name}")
-                else:
-                    print_error(f"  失败：{proj_name}")
-
+            # 无论是否有 Pages 项目，都继续处理 KV 命名空间
             print(f"\n  --- {account.name} 的 KV 命名空间 ---")
             kvs = api.list_kv_namespaces()
             if kvs:
                 print_info(f"  找到 {len(kvs)} 个 KV 命名空间")
-                if confirm("  是否删除 KV 命名空间？[y/N]"):
-                    kv_items = []
-                    for i, ns in enumerate(kvs, 1):
-                        title = ns.get("title", "")
-                        ns_id = ns.get("id", "")
-                        bound = ""
-                        for proj in projects:
-                            configs = proj.get("deployment_configs", {})
-                            for env_type in ["production", "preview"]:
-                                kvs_in_proj = configs.get(env_type, {}).get("kv_namespaces", {}) or {}
-                                for _, binding_info in kvs_in_proj.items():
-                                    if binding_info.get("namespace_id") == ns_id:
-                                        bound = "（已绑定项目）"
-                        kv_items.append({"index": i, "title": title, "id": ns_id, "bound": bound})
-                        print(f"  [{i}] {title}{bound}")
+                kv_items = []
+                for i, ns in enumerate(kvs, 1):
+                    title = ns.get("title", "")
+                    ns_id = ns.get("id", "")
+                    bound = ""
+                    for proj in projects or []:
+                        configs = proj.get("deployment_configs", {})
+                        for env_type in ["production", "preview"]:
+                            kvs_in_proj = configs.get(env_type, {}).get("kv_namespaces", {}) or {}
+                            for _, binding_info in kvs_in_proj.items():
+                                if binding_info.get("namespace_id") == ns_id:
+                                    bound = "（已绑定项目）"
+                    kv_items.append({"index": i, "title": title, "id": ns_id, "bound": bound})
+                    print(f"  [{i}] {title}{bound}")
 
-                    print("  [A]ll 全部")
-                    print("  [Q]uit 退出")
-                    kv_sel = input("输入序号删除 KV 命名空间: ").strip()
-                    if kv_sel and kv_sel.lower() != "q":
-                        selected_kvs = parse_selection(kv_sel, kv_items)
-                        if selected_kvs:
-                            has_bound = any(kv.get("bound") for kv in selected_kvs)
-                            if has_bound:
-                                print_warn("  警告：选中的命名空间中部分仍绑定到项目")
-                            if confirm("输入 'yes' 确认删除 KV"):
-                                for kv in selected_kvs:
-                                    print_info(f"  正在删除 KV 命名空间 '{kv['title']}' ...")
-                                    result = api.delete_kv_namespace(kv["id"])
-                                    if result and result.get("success"):
-                                        print_ok(f"    已删除 {kv['title']}")
-                                    else:
-                                        print_error(f"    失败：{kv['title']}")
+                print("  [A]ll 全部")
+                print("  [Q]uit 退出")
+                kv_sel = input("输入序号删除 KV 命名空间: ").strip()
+                if kv_sel and kv_sel.lower() != "q":
+                    selected_kvs = parse_selection(kv_sel, kv_items)
+                    if selected_kvs:
+                        has_bound = any(kv.get("bound") for kv in selected_kvs)
+                        if has_bound:
+                            print_warn("  警告：选中的命名空间中部分仍绑定到项目")
+                        if confirm("输入 'yes' 确认删除 KV"):
+                            for kv in selected_kvs:
+                                print_info(f"  正在删除 KV 命名空间 '{kv['title']}' ...")
+                                result = api.delete_kv_namespace(kv["id"])
+                                if result and result.get("success"):
+                                    print_ok(f"    已删除 {kv['title']}")
+                                else:
+                                    print_error(f"    失败：{kv['title']}")
             else:
                 print_info("  未找到 KV 命名空间")
         finally:

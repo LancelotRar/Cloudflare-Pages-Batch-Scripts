@@ -12,7 +12,6 @@ class CfApiClient:
         self.account_id = account_id
         self.token = token
         self._client = httpx.Client(
-            base_url=CF_API_BASE,
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
@@ -27,7 +26,7 @@ class CfApiClient:
         4xx errors are not retried.
         """
         backoff = [2, 4, 8]
-        url = f"/accounts/{self.account_id}{path}"
+        url = f"{CF_API_BASE}/accounts/{self.account_id}{path}"
         
         for attempt in range(3):
             try:
@@ -73,7 +72,10 @@ class CfApiClient:
         return results
 
     def list_projects(self) -> list[dict]:
-        return self._paginated_get("/pages/projects")
+        data = self._request("GET", "/pages/projects")
+        if data and data.get("success"):
+            return data.get("result", [])
+        return []
 
     def get_project(self, name: str) -> dict | None:
         data = self._request("GET", f"/pages/projects/{name}")
@@ -97,7 +99,10 @@ class CfApiClient:
         return data is not None and data.get("success", False)
 
     def list_deployments(self, project_name: str) -> list[dict]:
-        return self._paginated_get(f"/pages/projects/{project_name}/deployments")
+        data = self._request("GET", f"/pages/projects/{project_name}/deployments")
+        if data and data.get("success"):
+            return data.get("result", [])
+        return []
 
     def delete_deployment(self, project_name: str, deployment_id: str) -> dict | None:
         return self._request("DELETE", f"/pages/projects/{project_name}/deployments/{deployment_id}")
