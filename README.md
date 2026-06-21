@@ -8,8 +8,6 @@
 - [安装](#安装)
 - [配置文件](#配置文件)
 - [使用方法](#使用方法)
-  - [Python 版本（推荐）](#python-版本推荐)
-  - [PowerShell 版本](#powershell-版本)
 - [工作流说明](#工作流说明)
   - [批量部署](#批量部署)
   - [批量删除](#批量删除)
@@ -86,8 +84,6 @@ accounts:
 
 ## 使用方法
 
-### Python 版本（推荐）
-
 ```powershell
 python -m cf_wrangler
 ```
@@ -97,14 +93,6 @@ python -m cf_wrangler
 1. 批量删除    查询 CF → 删除自定义域 + 项目 + KV
 2. 批量部署    创建/更新 Pages 项目并上传源码
 Q. 退出
-```
-
-### PowerShell 版本
-
-原有的 `deploy.ps1` 保留不变，使用 `.env` 配置（格式不同），用法：
-
-```powershell
-.\deploy.ps1
 ```
 
 ## 工作流说明
@@ -171,7 +159,6 @@ CF-wrangler/
 │   └── test_workflows.py
 ├── config.yaml.example    # 配置文件模板（复制为 config.yaml 后使用）
 ├── config.yaml            # 用户配置文件（已加入 .gitignore）
-├── deploy.ps1             # 原有 PowerShell 版本（保留）
 ├── pyproject.toml         # Python 项目配置（构建/lint/typecheck/测试）
 └── README.md
 ```
