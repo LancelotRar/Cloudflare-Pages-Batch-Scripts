@@ -11,6 +11,9 @@ build/
 # MyPy
 .mypy_cache/
 
+# opencode workspace
+.omo/
+
 # Project specific
 config.yaml
 .wrangler/
