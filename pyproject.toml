@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-cf-wrangler = "cf_wrangler.__main__:main"
+cf-pages-batch-deploy = "cf_wrangler.__main__:main"
 
 [tool.ruff]
 target-version = "py310"
