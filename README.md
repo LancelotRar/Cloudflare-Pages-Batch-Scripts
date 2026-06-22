@@ -35,15 +35,15 @@ wrangler --version
 git clone <repo-url>
 cd CF-wrangler
 
-# 2. 安装 Python 依赖
-pip install pyyaml httpx rich
+# 2. 安装项目（自动装好依赖 + 注册 cf-wrangler 全局命令）
+pip install .
 
 # 3. 初始化配置文件（从模板复制）
 cp config.yaml.example config.yaml
 # Windows: copy config.yaml.example config.yaml
 ```
 
-无需虚拟环境，依赖直接安装到系统 Python 即可。
+> 开发模式用 `pip install -e .`，改代码不需要重装。
 
 ## 配置文件
 
