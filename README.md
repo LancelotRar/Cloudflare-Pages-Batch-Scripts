@@ -104,8 +104,6 @@ python -m cf_pages_batch_deploy
 
 编辑 `config.yaml`（从 `config.yaml.example` 复制而来）。
 
-> ⚠️ `config.yaml` 包含 API Token 等敏感信息，已加入 `.gitignore`，**不会**提交到 git。
-
 ```yaml
 files_to_redeploy:
   dir: files-to-redeploy
