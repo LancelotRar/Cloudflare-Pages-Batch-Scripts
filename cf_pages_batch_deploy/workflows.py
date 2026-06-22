@@ -1,7 +1,6 @@
 import os
 import shutil
 import subprocess
-import time
 import zipfile
 from pathlib import Path
 
@@ -498,19 +497,6 @@ def delete_workflow(cfg: Config):
                                     print_ok(f"    已删除域名 {domain}")
                                 else:
                                     print_warn(f"    域名删除可能失败：{domain}")
-
-                            deps = api.list_deployments(proj_name)
-                            if len(deps) > 50:
-                                sorted_deps = sorted(deps, key=lambda d: d.get("created_on", ""), reverse=True)
-                                to_delete = sorted_deps[1:]
-                                del_count = 0
-                                for dep in to_delete:
-                                    dep_id = dep.get("id", "")
-                                    result = api.delete_deployment(proj_name, dep_id)
-                                    if result and result.get("success"):
-                                        del_count += 1
-                                    time.sleep(0.1)
-                                print_ok(f"    已清理 {del_count} 个旧部署")
 
                             print_info(f"  正在删除项目 '{proj_name}' ...")
                             result = api.delete_project(proj_name)
