@@ -106,13 +106,13 @@ accounts:
 # 激活虚拟环境（macOS / Linux）
 # source .venv/bin/activate
 
-cf-pages-batch-scripts
+cf_pages_batch_scripts
 ```
 
 显示交互菜单：
 
 ```
-┌────────── Cloudflare Pages Manager ──────────┐
+┌────── Cloudflare Pages Batch Scripts ───────┐
 │  1.  批量删除    查询 CF → 删除项目 + KV     │
 │  2.  批量部署    创建/更新 Pages 项目         │
 │  Q.  退出                                    │
