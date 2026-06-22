@@ -1,11 +1,11 @@
-"""Tests for cf_wrangler.config"""
+"""Tests for cf_pages_batch_deploy.config"""
 
 from pathlib import Path
 
 import pytest
 import yaml
 
-from cf_wrangler.config import (
+from cf_pages_batch_deploy.config import (
     _get_bool,
     _get_str,
     _parse_accounts,
@@ -15,7 +15,7 @@ from cf_wrangler.config import (
     get_enabled_accounts,
     load_config,
 )
-from cf_wrangler.models import Account, Config, EnvVar, PagesConfig
+from cf_pages_batch_deploy.models import Account, Config, EnvVar, PagesConfig
 
 
 class TestGetStr:
