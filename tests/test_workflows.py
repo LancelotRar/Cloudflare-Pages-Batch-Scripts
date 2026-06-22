@@ -1,6 +1,6 @@
-"""Tests for cf_wrangler.workflows"""
+"""Tests for cf_pages_batch_deploy.workflows"""
 
-from cf_wrangler.workflows import parse_selection
+from cf_pages_batch_deploy.workflows import parse_selection
 
 
 class TestParseSelection:
