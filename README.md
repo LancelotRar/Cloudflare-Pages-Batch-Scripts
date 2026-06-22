@@ -1,43 +1,53 @@
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.10+-blue?logo=python" alt="Python">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+</p>
+
 # Cloudflare Pages Manager
 
-多账号 Cloudflare Pages 批量部署/删除工具。支持从源码仓库下载 → 创建/更新 Pages 项目 → 配置环境变量 + KV 绑定 + 自定义域名 → 部署的双上传工作流。
+多账号 Cloudflare Pages 批量部署/删除工具。从源码仓库下载 → 创建/更新 Pages 项目 → 配置环境变量 + KV 绑定 + 自定义域名 → 部署，全流程自动化。
+
+---
 
 ## 目录
 
 - [前置要求](#前置要求)
 - [安装](#安装)
+- [快速开始](#快速开始)
 - [配置文件](#配置文件)
-- [使用方法](#使用方法)
 - [工作流说明](#工作流说明)
   - [批量部署](#批量部署)
   - [批量删除](#批量删除)
-- [配置参考](#配置参考)
+- [开发](#开发)
 - [项目结构](#项目结构)
+
+---
 
 ## 前置要求
 
 | 依赖 | 说明 |
 |---|---|
+| **Python 3.10+** | 运行环境 |
 | **Node.js** (LTS) | wrangler CLI 运行环境，[下载](https://nodejs.org/) |
 | **wrangler CLI** | Cloudflare 官方 CLI，`npm install -g wrangler` |
-| **Python 3.10+** | Python 版本运行环境 |
 | **Cloudflare API Token** | 需有 Pages 读写权限，在 [API Tokens](https://dash.cloudflare.com/profile/api-tokens) 创建 |
 
 验证 wrangler 安装：
+
 ```powershell
 wrangler --version
 ```
 
+---
+
 ## 安装
 
-拿到项目文件夹后，在项目根目录执行：
-
 ```powershell
-# 1. 进入项目目录（替换成你的实际路径）
-cd E:\path\to\cf-pages-batch-deploy
+# 1. 克隆仓库
+git clone https://github.com/<your-username>/cf-pages-batch-deploy.git
+cd cf-pages-batch-deploy
 
-# 2. 安装项目（自动装好 pyyaml、httpx、rich 三个依赖
-#    并注册 cf-pages-batch-deploy 全局命令）
+# 2. 安装项目（自动安装 pyyaml、httpx、rich 依赖）
 pip install .
 
 # 3. 从模板创建配置文件
@@ -46,12 +56,55 @@ copy config.yaml.example config.yaml
 
 > 开发模式用 `pip install -e .`，改代码不需要重装。
 
+---
+
+## 快速开始
+
+### 1. 编辑配置
+
+编辑 `config.yaml`，填入你的 Cloudflare API Token 和 Pages 项目信息：
+
+```yaml
+accounts:
+  - name: my-account
+    enabled: true
+    token: cfat_xxxxx            # 你的 Cloudflare API Token
+    account_id: xxxxxx           # 你的账户 ID
+    pages:
+      project_name: my-project   # Pages 项目名
+      domain: my-domain.com      # 自定义域名（可选）
+      kv_namespace: my-kv        # KV 命名空间（可选）
+```
+
+### 2. 运行
+
+```powershell
+cf-pages-batch-deploy
+```
+
+显示交互菜单：
+
+```
+┌────────── Cloudflare Pages Manager ──────────┐
+│  1.  批量删除    查询 CF → 删除项目 + KV     │
+│  2.  批量部署    创建/更新 Pages 项目         │
+│  Q.  退出                                    │
+└───────────────────────────────────────────────┘
+```
+
+也可直接用 Python module 方式运行：
+
+```powershell
+python -m cf_wrangler
+```
+
+---
+
 ## 配置文件
 
-编辑 `config.yaml`（从 `config.yaml.example` 复制而来），配置你的 Cloudflare 账号和 Pages 项目。
+编辑 `config.yaml`（从 `config.yaml.example` 复制而来）。
 
-> ⚠️ `config.yaml` 包含 API Token 等敏感信息，已被加入 `.gitignore`，不会提交到 git 仓库。
-> 首次使用请从 `config.yaml.example` 复制一份。
+> ⚠️ `config.yaml` 包含 API Token 等敏感信息，已加入 `.gitignore`，**不会**提交到 git。
 
 ```yaml
 files_to_redeploy:
@@ -59,48 +112,53 @@ files_to_redeploy:
   download_url: https://example.com/source.zip
 
 accounts:
-  - name: my-account       # 显示名称
-    enabled: true           # true=启用，false=跳过
-    token: cfat_xxx         # Cloudflare API Token
-    account_id: xxxxxx      # 账户 ID
+  - name: my-account
+    enabled: true
+    token: cfat_xxx
+    account_id: xxxxxx
     pages:
-      project_name: my-project   # Pages 项目名
-      domain: my-domain.com      # 自定义域名（可选）
-      kv_create: true            # 是否自动创建 KV 命名空间
-      kv_namespace: my-kv        # KV 命名空间名称
-      kv_binding: true           # 是否绑定 KV 命名空间到项目
-      kv_binding_env: KV         # KV 绑定的环境变量名
-      project_type: production   # production 或 preview
+      project_name: my-project
+      domain: my-domain.com
+      kv_create: true
+      kv_namespace: my-kv
+      kv_binding: true
+      kv_binding_env: KV
+      project_type: production
     env:
       - name: UUID
-        type: plain_text         # plain_text 或 secret_text
+        type: plain_text
         value: xxxxxxxx
       - name: ADMIN
         type: plain_text
         value: admin
 ```
 
-- 支持多个账号，`enabled: false` 的账号会被跳过
-- `download_url` 指向一个包含部署源码的 ZIP 包 URL
+### 参数说明
 
-## 使用方法
+| 路径 | 字段 | 说明 |
+|---|---|---|
+| `files_to_redeploy` | `dir` | 源码解压目录名 |
+| | `download_url` | 部署源码 ZIP 下载地址 |
+| `accounts[]` | `name` | 显示名称 |
+| | `enabled` | `true`=启用，`false`=跳过 |
+| | `token` | Cloudflare API Token |
+| | `account_id` | Cloudflare 账户 ID |
+| `accounts[].pages` | `project_name` | Pages 项目名称 |
+| | `domain` | 自定义域名（为空则跳过） |
+| | `kv_create` | 是否自动创建 KV 命名空间 |
+| | `kv_namespace` | KV 命名空间标题 |
+| | `kv_binding` | 是否将 KV 绑定到项目 |
+| | `kv_binding_env` | KV 绑定的环境变量名，默认 `KV` |
+| | `project_type` | `production` 或 `preview` |
+| `accounts[].env[]` | `name` | 环境变量名 |
+| | `type` | `plain_text` 或 `secret_text` |
+| | `value` | 环境变量值 |
 
-```powershell
-cf-pages-batch-deploy
-```
+### 多账号支持
 
-或
+`accounts` 支持配置多个账号，`enabled: false` 的账号会被自动跳过。
 
-```powershell
-python -m cf_wrangler
-```
-
-交互菜单：
-```
-1. 批量删除    查询 CF → 删除自定义域 + 项目 + KV
-2. 批量部署    创建/更新 Pages 项目并上传源码
-Q. 退出
-```
+---
 
 ## 工作流说明
 
@@ -124,51 +182,7 @@ Q. 退出
 3. 删除自定义域名 → 清理旧部署（超过 50 个时提示）→ 删除项目
 4. 可选删除 KV 命名空间（会标注哪些仍绑定到项目）
 
-## 配置参考
-
-### config.yaml 字段说明
-
-| 路径 | 字段 | 类型 | 说明 |
-|---|---|---|---|
-| `files_to_redeploy` | `dir` | string | 源码解压目录名 |
-| | `download_url` | string | 部署源码 ZIP 下载地址 |
-| `accounts[]` | `name` | string | 显示名称 |
-| | `enabled` | bool | 是否启用 |
-| | `token` | string | Cloudflare API Token |
-| | `account_id` | string | Cloudflare 账户 ID |
-| `accounts[].pages` | `project_name` | string | Pages 项目名称 |
-| | `domain` | string | 自定义域名（为空则跳过） |
-| | `kv_create` | bool | 是否自动创建 KV 命名空间 |
-| | `kv_namespace` | string | KV 命名空间标题 |
-| | `kv_binding` | bool | 是否将 KV 绑定到项目 |
-| | `kv_binding_env` | string | KV 绑定的环境变量名，默认 `KV` |
-| | `project_type` | string | `production` 或 `preview` |
-| `accounts[].env[]` | `name` | string | 环境变量名 |
-| | `type` | string | `plain_text` 或 `secret_text` |
-| | `value` | string | 环境变量值 |
-
-## 项目结构
-
-```
-CF-wrangler/
-├── cf_wrangler/           # Python 包
-│   ├── __init__.py        # 包入口，导出 main()
-│   ├── __main__.py        # 入口，菜单循环
-│   ├── models.py          # 数据类（Account, PagesConfig, EnvVar）
-│   ├── config.py          # 加载解析 config.yaml
-│   ├── api.py             # Cloudflare REST API 客户端（含重试逻辑）
-│   ├── ui.py              # 交互界面（Rich 彩色输出）
-│   └── workflows.py       # 部署/删除工作流逻辑
-├── tests/                 # 测试目录（pytest, 80 个测试用例）
-│   ├── test_models.py
-│   ├── test_config.py
-│   ├── test_api.py
-│   └── test_workflows.py
-├── config.yaml.example    # 配置文件模板（复制为 config.yaml 后使用）
-├── config.yaml            # 用户配置文件（已加入 .gitignore）
-├── pyproject.toml         # Python 项目配置（构建/lint/typecheck/测试）
-└── README.md
-```
+---
 
 ## 开发
 
@@ -183,3 +197,34 @@ python -m pytest tests/ -v
 pip install ruff
 ruff check cf_wrangler/
 ```
+
+---
+
+## 项目结构
+
+```
+cf-pages-batch-deploy/
+├── cf_wrangler/           # Python 包
+│   ├── __init__.py        # 包入口
+│   ├── __main__.py        # 命令行入口
+│   ├── models.py          # 数据类（Account, PagesConfig, EnvVar）
+│   ├── config.py          # YAML 配置加载与解析
+│   ├── api.py             # Cloudflare REST API 客户端
+│   ├── ui.py              # 交互界面（基于 Rich）
+│   └── workflows.py       # 部署/删除工作流逻辑
+├── tests/                 # pytest 测试（80+ 用例）
+│   ├── test_models.py
+│   ├── test_config.py
+│   ├── test_api.py
+│   └── test_workflows.py
+├── config.yaml.example    # 配置文件模板
+├── config.yaml            # 用户配置（已 gitignore）
+├── pyproject.toml         # 项目元数据与依赖声明
+└── README.md
+```
+
+---
+
+## 许可证
+
+MIT
