@@ -95,7 +95,7 @@ cf-pages-batch-deploy
 也可直接用 Python module 方式运行：
 
 ```powershell
-python -m cf_wrangler
+python -m cf_pages_batch_deploy
 ```
 
 ---
@@ -195,7 +195,7 @@ python -m pytest tests/ -v
 
 # 代码检查（需安装 ruff）
 pip install ruff
-ruff check cf_wrangler/
+ruff check cf_pages_batch_deploy/
 ```
 
 ---
@@ -204,7 +204,7 @@ ruff check cf_wrangler/
 
 ```
 cf-pages-batch-deploy/
-├── cf_wrangler/           # Python 包
+├── cf_pages_batch_deploy/           # Python 包
 │   ├── __init__.py        # 包入口
 │   ├── __main__.py        # 命令行入口
 │   ├── models.py          # 数据类（Account, PagesConfig, EnvVar）

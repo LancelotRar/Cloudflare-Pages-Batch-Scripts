@@ -1,10 +1,10 @@
-"""Tests for cf_wrangler.models"""
+"""Tests for cf_pages_batch_deploy.models"""
 
 from dataclasses import FrozenInstanceError
 
 import pytest
 
-from cf_wrangler.models import Account, Config, EnvVar, FilesToRedeploy, PagesConfig
+from cf_pages_batch_deploy.models import Account, Config, EnvVar, FilesToRedeploy, PagesConfig
 
 
 class TestFilesToRedeploy:
