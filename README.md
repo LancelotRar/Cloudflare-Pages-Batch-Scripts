@@ -85,6 +85,12 @@ accounts:
 ## 使用方法
 
 ```powershell
+cf-pages-batch-deploy
+```
+
+或
+
+```powershell
 python -m cf_wrangler
 ```
 
