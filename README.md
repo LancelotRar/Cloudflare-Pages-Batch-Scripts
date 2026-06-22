@@ -44,8 +44,8 @@ wrangler --version
 
 ```powershell
 # 1. 克隆仓库
-git clone https://github.com/<your-username>/cf-pages-batch-deploy.git
-cd cf-pages-batch-deploy
+git clone https://github.com/<your-username>/cf-pages-batch.git
+cd cf-pages-batch
 
 # 2. 创建并激活虚拟环境
 python -m venv .venv
@@ -216,7 +216,7 @@ ruff check cf_pages_batch_deploy/
 ## 项目结构
 
 ```
-cf-pages-batch-deploy/
+cf-pages-batch/
 ├── cf_pages_batch_deploy/           # Python 包
 │   ├── __init__.py        # 包入口
 │   ├── __main__.py        # 命令行入口
