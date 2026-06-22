@@ -59,8 +59,8 @@ wrangler --version
 
 ```powershell
 # 1. 克隆仓库
-git clone https://github.com/<your-username>/cf-pages-batch.git
-cd cf-pages-batch
+git clone https://github.com/<your-username>/Cloudflare-Pages-Batch-Scripts.git cf_pages_batch_scripts
+cd cf_pages_batch_scripts
 
 # 2. 创建并激活虚拟环境
 python -m venv .venv
@@ -106,7 +106,7 @@ accounts:
 # 激活虚拟环境（macOS / Linux）
 # source .venv/bin/activate
 
-cf-pages-batch-deploy
+cf-pages-batch-scripts
 ```
 
 显示交互菜单：
@@ -122,7 +122,7 @@ cf-pages-batch-deploy
 也可直接指定虚拟环境中的 Python 运行（无需先激活）：
 
 ```powershell
-.venv\Scripts\python -m cf_pages_batch_deploy
+.venv\Scripts\python -m cf_pages_batch_scripts
 ```
 
 ---
@@ -274,7 +274,7 @@ python -m pytest tests/ -v
 
 # 代码检查（需安装 ruff）
 pip install ruff
-ruff check cf_pages_batch_deploy/
+ruff check cf_pages_batch_scripts/
 ```
 
 ---
@@ -282,8 +282,8 @@ ruff check cf_pages_batch_deploy/
 ## 项目结构
 
 ```
-cf-pages-batch/
-├── cf_pages_batch_deploy/           # Python 包
+cf_pages_batch_scripts/
+├── cf_pages_batch_scripts/          # Python 包
 │   ├── __init__.py        # 包入口
 │   ├── __main__.py        # 命令行入口
 │   ├── models.py          # 数据类（Account, PagesConfig, EnvVar）

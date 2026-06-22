@@ -4,7 +4,7 @@ import httpx
 import pytest
 from pytest_httpx import HTTPXMock
 
-from cf_pages_batch_deploy.api import CfApiClient
+from cf_pages_batch_scripts.api import CfApiClient
 
 API_BASE = "https://api.cloudflare.com/client/v4"
 
