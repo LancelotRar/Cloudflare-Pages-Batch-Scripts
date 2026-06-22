@@ -47,10 +47,14 @@ wrangler --version
 git clone https://github.com/<your-username>/cf-pages-batch-deploy.git
 cd cf-pages-batch-deploy
 
-# 2. 安装项目（自动安装 pyyaml、httpx、rich 依赖）
+# 2. 创建并激活虚拟环境
+python -m venv .venv
+.venv\Scripts\activate
+
+# 3. 安装项目（自动安装 pyyaml、httpx、rich 依赖）
 pip install .
 
-# 3. 从模板创建配置文件
+# 4. 从模板创建配置文件
 copy config.yaml.example config.yaml
 ```
 
@@ -185,6 +189,9 @@ accounts:
 ## 开发
 
 ```powershell
+# 激活虚拟环境
+.venv\Scripts\activate
+
 # 安装测试依赖
 pip install pytest pytest-httpx
 
