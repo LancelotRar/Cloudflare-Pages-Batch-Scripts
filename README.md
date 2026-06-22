@@ -30,17 +30,18 @@ wrangler --version
 
 ## 安装
 
-```powershell
-# 1. 克隆项目
-git clone <repo-url>
-cd CF-wrangler
+拿到项目文件夹后，在项目根目录执行：
 
-# 2. 安装项目（自动装好依赖 + 注册 cf-pages-batch-deploy 全局命令）
+```powershell
+# 1. 进入项目目录（替换成你的实际路径）
+cd E:\path\to\cf-pages-batch-deploy
+
+# 2. 安装项目（自动装好 pyyaml、httpx、rich 三个依赖
+#    并注册 cf-pages-batch-deploy 全局命令）
 pip install .
 
-# 3. 初始化配置文件（从模板复制）
-cp config.yaml.example config.yaml
-# Windows: copy config.yaml.example config.yaml
+# 3. 从模板创建配置文件
+copy config.yaml.example config.yaml
 ```
 
 > 开发模式用 `pip install -e .`，改代码不需要重装。
