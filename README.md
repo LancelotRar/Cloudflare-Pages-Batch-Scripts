@@ -35,7 +35,7 @@ wrangler --version
 git clone <repo-url>
 cd CF-wrangler
 
-# 2. 安装项目（自动装好依赖 + 注册 cf-wrangler 全局命令）
+# 2. 安装项目（自动装好依赖 + 注册 cf-pages-batch-deploy 全局命令）
 pip install .
 
 # 3. 初始化配置文件（从模板复制）
