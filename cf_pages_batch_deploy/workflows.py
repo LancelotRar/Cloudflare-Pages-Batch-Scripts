@@ -11,7 +11,6 @@ from .api import CfApiClient
 from .config import get_enabled_accounts
 from .models import Config, Account
 from .ui import (
-    confirm,
     print_error,
     print_header,
     print_info,
@@ -487,42 +486,38 @@ def delete_workflow(cfg: Config):
                 if sel and sel.lower() != "q":
                     selected_projs = parse_selection(sel, proj_items)
                     if selected_projs:
-                        print_warn(f"  即将删除 {len(selected_projs)} 个项目及其自定义域名")
-                        if confirm("输入 'yes' 确认"):
-                            for item in selected_projs:
-                                proj_name = item["name"]
-                                print(f"\n  --- {proj_name} ---")
+                        print_info(f"  正在删除 {len(selected_projs)} 个项目 ...")
+                        for item in selected_projs:
+                            proj_name = item["name"]
+                            print(f"\n  --- {proj_name} ---")
 
-                                for domain in item["domains"]:
-                                    print_info(f"  正在删除域名 '{domain}' ...")
-                                    result = api.delete_domain(proj_name, domain)
-                                    if result and result.get("success"):
-                                        print_ok(f"    已删除域名 {domain}")
-                                    else:
-                                        print_warn(f"    域名删除可能失败：{domain}")
-
-                                deps = api.list_deployments(proj_name)
-                                if len(deps) > 50:
-                                    print_warn(f"    项目有 {len(deps)} 个部署")
-                                    clean = input("    是否先删除旧部署？（超过 50 个需先清理）[y/N]: ").strip().lower()
-                                    if clean == "y":
-                                        sorted_deps = sorted(deps, key=lambda d: d.get("created_on", ""), reverse=True)
-                                        to_delete = sorted_deps[1:]
-                                        del_count = 0
-                                        for dep in to_delete:
-                                            dep_id = dep.get("id", "")
-                                            result = api.delete_deployment(proj_name, dep_id)
-                                            if result and result.get("success"):
-                                                del_count += 1
-                                            time.sleep(0.1)
-                                        print_ok(f"    已清理 {del_count} 个部署")
-
-                                print_info(f"  正在删除项目 '{proj_name}' ...")
-                                result = api.delete_project(proj_name)
+                            for domain in item["domains"]:
+                                print_info(f"  正在删除域名 '{domain}' ...")
+                                result = api.delete_domain(proj_name, domain)
                                 if result and result.get("success"):
-                                    print_ok(f"  已删除 {proj_name}")
+                                    print_ok(f"    已删除域名 {domain}")
                                 else:
-                                    print_error(f"  失败：{proj_name}")
+                                    print_warn(f"    域名删除可能失败：{domain}")
+
+                            deps = api.list_deployments(proj_name)
+                            if len(deps) > 50:
+                                sorted_deps = sorted(deps, key=lambda d: d.get("created_on", ""), reverse=True)
+                                to_delete = sorted_deps[1:]
+                                del_count = 0
+                                for dep in to_delete:
+                                    dep_id = dep.get("id", "")
+                                    result = api.delete_deployment(proj_name, dep_id)
+                                    if result and result.get("success"):
+                                        del_count += 1
+                                    time.sleep(0.1)
+                                print_ok(f"    已清理 {del_count} 个旧部署")
+
+                            print_info(f"  正在删除项目 '{proj_name}' ...")
+                            result = api.delete_project(proj_name)
+                            if result and result.get("success"):
+                                print_ok(f"  已删除 {proj_name}")
+                            else:
+                                print_error(f"  失败：{proj_name}")
             else:
                 print_info(f"  {account.name} 未找到 Pages 项目，跳过项目删除")
 
@@ -554,17 +549,13 @@ def delete_workflow(cfg: Config):
                 if kv_sel and kv_sel.lower() != "q":
                     selected_kvs = parse_selection(kv_sel, kv_items)
                     if selected_kvs:
-                        has_bound = any(kv.get("bound") for kv in selected_kvs)
-                        if has_bound:
-                            print_warn("  警告：选中的命名空间中部分仍绑定到项目")
-                        if confirm("输入 'yes' 确认删除 KV"):
-                            for kv in selected_kvs:
-                                print_info(f"  正在删除 KV 命名空间 '{kv['title']}' ...")
-                                result = api.delete_kv_namespace(kv["id"])
-                                if result and result.get("success"):
-                                    print_ok(f"    已删除 {kv['title']}")
-                                else:
-                                    print_error(f"    失败：{kv['title']}")
+                        for kv in selected_kvs:
+                            print_info(f"  正在删除 KV 命名空间 '{kv['title']}' ...")
+                            result = api.delete_kv_namespace(kv["id"])
+                            if result and result.get("success"):
+                                print_ok(f"    已删除 {kv['title']}")
+                            else:
+                                print_error(f"    失败：{kv['title']}")
             else:
                 print_info("  未找到 KV 命名空间")
 
