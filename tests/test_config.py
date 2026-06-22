@@ -1,11 +1,11 @@
-"""Tests for cf_pages_batch_deploy.config"""
+"""Tests for cf_pages_batch_scripts.config"""
 
 from pathlib import Path
 
 import pytest
 import yaml
 
-from cf_pages_batch_deploy.config import (
+from cf_pages_batch_scripts.config import (
     _get_bool,
     _get_str,
     _parse_accounts,
@@ -15,7 +15,7 @@ from cf_pages_batch_deploy.config import (
     get_enabled_accounts,
     load_config,
 )
-from cf_pages_batch_deploy.models import Account, Config, EnvVar, PagesConfig
+from cf_pages_batch_scripts.models import Account, Config, EnvVar, PagesConfig
 
 
 class TestGetStr:
