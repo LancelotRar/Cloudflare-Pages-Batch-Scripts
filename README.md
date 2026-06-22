@@ -82,7 +82,15 @@ accounts:
 
 ### 2. 运行
 
+先激活虚拟环境，再执行命令：
+
 ```powershell
+# 激活虚拟环境（Windows）
+.venv\Scripts\activate
+
+# 激活虚拟环境（macOS / Linux）
+# source .venv/bin/activate
+
 cf-pages-batch-deploy
 ```
 
@@ -96,10 +104,10 @@ cf-pages-batch-deploy
 └───────────────────────────────────────────────┘
 ```
 
-也可直接用 Python module 方式运行：
+也可直接指定虚拟环境中的 Python 运行（无需先激活）：
 
 ```powershell
-python -m cf_pages_batch_deploy
+.venv\Scripts\python -m cf_pages_batch_deploy
 ```
 
 ---
