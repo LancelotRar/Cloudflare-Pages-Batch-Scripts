@@ -6,7 +6,7 @@
 # Cloudflare Pages Batch Scripts
 
 <p align="center">
-  <img src="https://count.getloli.com/@:LancelotRar?theme=booru-koe&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto">
+  <img src="https://count.getloli.com/@:cpbs?theme=booru-koe&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto">
 </p>
 
 ---
