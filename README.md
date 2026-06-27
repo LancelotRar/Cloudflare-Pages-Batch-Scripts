@@ -9,9 +9,10 @@
   <img src="https://count.getloli.com/@:LancelotRar?name=%3ALancelotRar&theme=booru-koe&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto">
 </p>
 
+---
+
 多账号 Cloudflare Pages 批量部署/删除工具。从源码仓库下载 → 创建/更新 Pages 项目 → 配置环境变量 + KV 绑定 + 自定义域名 → 部署，全流程自动化。
 
----
 
 ## 功能
 
