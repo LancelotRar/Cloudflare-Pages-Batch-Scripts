@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 .venv/
+.pytest_cache/
 
 # Ruff
 .ruff_cache/
