@@ -19,6 +19,7 @@ build/
 config.yaml
 .wrangler/
 files-to-redeploy/
+.codegraph/
 
 # OS
 .DS_Store
