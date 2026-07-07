@@ -15,6 +15,7 @@ build/
 
 # opencode workspace
 .omo/
+AGENTS.md
 
 # Project specific
 config.yaml
