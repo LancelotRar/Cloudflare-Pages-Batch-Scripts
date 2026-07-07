@@ -132,6 +132,16 @@ cf_pages_batch_scripts
 .venv\Scripts\python -m cf_pages_batch_scripts
 ```
 
+指定配置文件路径：
+
+```powershell
+cf_pages_batch_scripts -c /path/to/config.yaml
+# 或
+.venv\Scripts\python -m cf_pages_batch_scripts --config custom.yaml
+```
+
+不传 `-c` 时默认查找当前目录或项目根目录下的 `config.yaml`。
+
 ---
 
 ## 配置文件
