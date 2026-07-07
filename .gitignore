@@ -22,6 +22,7 @@ config.yaml
 .wrangler/
 files-to-redeploy/
 .codegraph/
+config-cffc6.yaml
 
 # OS
 .DS_Store
