@@ -18,11 +18,10 @@ build/
 AGENTS.md
 
 # Project specific
-config.yaml
 .wrangler/
 files-to-redeploy/
 .codegraph/
-config*.yaml
+*.yaml
 
 # OS
 .DS_Store
