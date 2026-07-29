@@ -448,102 +448,59 @@ def delete_workflow(cfg: Config):
 
     print_header("批量删除")
     print_info("将对每个账号依次执行：")
-    print_info("  1. 从 Cloudflare 列出项目")
-    print_info("  2. 选择要删除的项目（同时删除自定义域名 + 项目）")
-    print_info("  3. 可选：删除 KV 命名空间")
+    print_info("  1. 删除所有 Pages 项目（含自定义域名）")
+    print_info("  2. 删除所有 KV 命名空间")
     print()
 
     for account in selected_accounts:
         with CfApiClient(account.account_id, account.token) as api:
             print_header(f"--- {account.name} ---")
 
+            # 删除所有 Pages 项目
             print_info("正在查询项目 ...")
             projects = api.list_projects()
-
             if projects:
-                proj_items = []
-                for i, proj in enumerate(projects, 1):
-                    name = proj.get("name", "")
+                print_info(f"  找到 {len(projects)} 个项目，正在删除 ...")
+                for proj in projects:
+                    proj_name = proj.get("name", "")
+                    print(f"\n  --- {proj_name} ---")
+
                     domains = [
                         d for d in proj.get("domains", [])
-                        if d != f"{name}.pages.dev"
+                        if d != f"{proj_name}.pages.dev"
                     ]
-                    domain_str = f" | 域名：{', '.join(domains)}" if domains else ""
-                    proj_items.append({
-                        "index": i,
-                        "name": name,
-                        "project": proj,
-                        "domains": domains,
-                    })
-                    print(f"  [{i}] {name}{domain_str}")
+                    for domain in domains:
+                        print_info(f"  正在删除域名 '{domain}' ...")
+                        result = api.delete_domain(proj_name, domain)
+                        if result and result.get("success"):
+                            print_ok(f"    已删除域名 {domain}")
+                        else:
+                            print_warn(f"    域名删除可能失败：{domain}")
 
-                print("  [A]ll 全部")
-                print("  [Q]uit 退出")
-                print()
-
-                sel = input("输入序号删除（如 '1,3' 或 '1-3'），[A]ll 全选，回车跳过: ").strip()
-                if sel and sel.lower() != "q":
-                    selected_projs = parse_selection(sel, proj_items)
-                    if selected_projs:
-                        print_info(f"  正在删除 {len(selected_projs)} 个项目 ...")
-                        for item in selected_projs:
-                            proj_name = item["name"]
-                            print(f"\n  --- {proj_name} ---")
-
-                            for domain in item["domains"]:
-                                print_info(f"  正在删除域名 '{domain}' ...")
-                                result = api.delete_domain(proj_name, domain)
-                                if result and result.get("success"):
-                                    print_ok(f"    已删除域名 {domain}")
-                                else:
-                                    print_warn(f"    域名删除可能失败：{domain}")
-
-                            print_info(f"  正在删除项目 '{proj_name}' ...")
-                            result = api.delete_project(proj_name)
-                            if result and result.get("success"):
-                                print_ok(f"  已删除 {proj_name}")
-                            else:
-                                print_error(f"  失败：{proj_name}")
+                    print_info(f"  正在删除项目 '{proj_name}' ...")
+                    result = api.delete_project(proj_name)
+                    if result and result.get("success"):
+                        print_ok(f"  已删除 {proj_name}")
+                    else:
+                        print_error(f"  失败：{proj_name}")
             else:
                 print_info(f"  {account.name} 未找到 Pages 项目，跳过项目删除")
 
-            # 无论是否有 Pages 项目，都继续处理 KV 命名空间
-            # 刷新项目列表，确保绑定检测不引用已删除的项目
-            projects = api.list_projects()
+            # 删除所有 KV 命名空间
             print(f"\n  --- {account.name} 的 KV 命名空间 ---")
             kvs = api.list_kv_namespaces()
             if kvs:
-                print_info(f"  找到 {len(kvs)} 个 KV 命名空间")
-                kv_items = []
-                for i, ns in enumerate(kvs, 1):
+                print_info(f"  找到 {len(kvs)} 个 KV 命名空间，正在删除 ...")
+                for ns in kvs:
                     title = ns.get("title", "")
                     ns_id = ns.get("id", "")
-                    bound = ""
-                    for proj in projects or []:
-                        configs = proj.get("deployment_configs", {})
-                        for env_type in ["production", "preview"]:
-                            kvs_in_proj = configs.get(env_type, {}).get("kv_namespaces", {}) or {}
-                            for _, binding_info in kvs_in_proj.items():
-                                if binding_info.get("namespace_id") == ns_id:
-                                    bound = "（已绑定项目）"
-                    kv_items.append({"index": i, "title": title, "id": ns_id, "bound": bound})
-                    print(f"  [{i}] {title}{bound}")
-
-                print("  [A]ll 全部")
-                print("  [Q]uit 退出")
-                kv_sel = input("输入序号删除 KV 命名空间: ").strip()
-                if kv_sel and kv_sel.lower() != "q":
-                    selected_kvs = parse_selection(kv_sel, kv_items)
-                    if selected_kvs:
-                        for kv in selected_kvs:
-                            print_info(f"  正在删除 KV 命名空间 '{kv['title']}' ...")
-                            result = api.delete_kv_namespace(kv["id"])
-                            if result and result.get("success"):
-                                print_ok(f"    已删除 {kv['title']}")
-                            else:
-                                print_error(f"    失败：{kv['title']}")
+                    print_info(f"  正在删除 KV 命名空间 '{title}' ...")
+                    result = api.delete_kv_namespace(ns_id)
+                    if result and result.get("success"):
+                        print_ok(f"    已删除 {title}")
+                    else:
+                        print_error(f"    失败：{title}")
             else:
                 print_info("  未找到 KV 命名空间")
 
     print_ok("========== 删除完成 ==========")
-    wait_enter()
