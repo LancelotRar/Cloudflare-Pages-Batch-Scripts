@@ -321,11 +321,6 @@ cf_pages_batch_scripts/
 │   ├── api.py             # Cloudflare REST API 客户端
 │   ├── ui.py              # 交互界面（基于 Rich）
 │   └── workflows.py       # 部署/删除工作流逻辑
-├── tests/                 # pytest 测试（80+ 用例）
-│   ├── test_models.py
-│   ├── test_config.py
-│   ├── test_api.py
-│   └── test_workflows.py
 ├── config.yaml.example    # 配置文件模板
 ├── config.yaml            # 用户配置（已 gitignore）
 ├── pyproject.toml         # 项目元数据与依赖声明
