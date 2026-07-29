@@ -149,40 +149,30 @@ cf_pages_batch_scripts -c /path/to/config.yaml
 编辑 `config.yaml`（从 `config.yaml.example` 复制而来）。示例中包含 5 个账号配置，覆盖不同场景：
 
 ```yaml
-Mypageskvyes: &Mypageskvyes
-  project_name: my-project
-  domain: my-domain.com
-  kv_create: true
-  kv_namespace: my-kv
-  kv_binding: true
-  kv_binding_env: KV
-  project_type: production
-
-Mypageskvno: &Mypageskvno
-  project_name: my-preview-app
-  kv_create: true
-  kv_namespace: my-preview-kv
-  kv_binding: false
-  project_type: preview
-
 files_to_redeploy:
   dir: files-to-redeploy
   download_url: https://example.com/source.zip
 
 accounts:
-  # 账号 1 — 完整配置：自定义域名 + KV + 环境变量
+  # 账号 1 — 完整配置：含自定义域名 + KV + 环境变量
   - name: my-account
     enabled: true
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx1
     account_id: a1b2c3d4e5f6a1b2c3d4e5f6
     pages:
-      <<: *Mypageskvyes
+      project_name: my-project
+      domain: my-domain.com
+      kv_create: true
+      kv_namespace: my-kv
+      kv_binding: true
+      kv_binding_env: KV
+      project_type: production
     env:
       - name: UUID
         type: plain_text
         value: 550e8400-e29b-41d4-a716-446655440000
 
-  # 账号 2 — 最小配置：仅必填，无域名无 KV
+  # 账号 2 — 最小配置：仅必填字段，无域名无 KV
   - name: my-account
     enabled: true
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx2
@@ -190,15 +180,19 @@ accounts:
     pages:
       project_name: my-minimal-project
 
-  # 账号 3 — preview 类型，创建 KV 但不绑定
+  # 账号 3 — preview 类型项目，带 KV 但不绑定
   - name: my-account
     enabled: true
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx3
     account_id: c3d4e5f6a1b2c3d4e5f6a1b2
     pages:
-      <<: *Mypageskvno
+      project_name: my-preview-app
+      kv_create: true
+      kv_namespace: my-preview-kv
+      kv_binding: false
+      project_type: preview
 
-  # 账号 4 — 禁用账号（被跳过）
+  # 账号 4 — 禁用账号（enabled: false，会被跳过）
   - name: my-account
     enabled: false
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx4
@@ -213,11 +207,13 @@ accounts:
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx5
     account_id: e5f6a1b2c3d4e5f6a1b2c3d4
     pages:
-      <<: *Mypageskvyes
       project_name: my-env-rich-app
       domain: env-rich.example.com
+      kv_create: true
       kv_namespace: my-rich-kv
+      kv_binding: true
       kv_binding_env: MY_KV
+      project_type: production
     env:
       - name: API_KEY
         type: secret_text
