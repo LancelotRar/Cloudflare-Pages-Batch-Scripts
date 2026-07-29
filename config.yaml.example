@@ -1,3 +1,7 @@
+x-templates:
+  enabled: &enabled true
+  production: &production production
+
 files_to_redeploy:
   dir: files-to-redeploy
   download_url: https://example.com/source.zip
@@ -5,7 +9,7 @@ files_to_redeploy:
 accounts:
   # 账号 1 — 完整配置：含自定义域名 + KV + 环境变量
   - name: my-account
-    enabled: true
+    enabled: *enabled
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx1
     account_id: a1b2c3d4e5f6a1b2c3d4e5f6
     pages:
@@ -15,7 +19,7 @@ accounts:
       kv_namespace: my-kv
       kv_binding: true
       kv_binding_env: KV
-      project_type: production
+      project_type: *production
     env:
       - name: UUID
         type: plain_text
@@ -23,7 +27,7 @@ accounts:
 
   # 账号 2 — 最小配置：仅必填字段，无域名无 KV
   - name: my-account
-    enabled: true
+    enabled: *enabled
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx2
     account_id: b2c3d4e5f6a1b2c3d4e5f6a1
     pages:
@@ -31,7 +35,7 @@ accounts:
 
   # 账号 3 — preview 类型项目，带 KV 但不绑定
   - name: my-account
-    enabled: true
+    enabled: *enabled
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx3
     account_id: c3d4e5f6a1b2c3d4e5f6a1b2
     pages:
@@ -49,10 +53,11 @@ accounts:
     pages:
       project_name: my-disabled-project
       domain: disabled.example.com
+      project_type: *production
 
   # 账号 5 — 多环境变量 + 自定义 KV 绑定名
   - name: my-account
-    enabled: true
+    enabled: *enabled
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx5
     account_id: e5f6a1b2c3d4e5f6a1b2c3d4
     pages:
@@ -62,7 +67,7 @@ accounts:
       kv_namespace: my-rich-kv
       kv_binding: true
       kv_binding_env: MY_KV
-      project_type: production
+      project_type: *production
     env:
       - name: API_KEY
         type: secret_text
