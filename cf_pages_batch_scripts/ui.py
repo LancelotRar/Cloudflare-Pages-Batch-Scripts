@@ -51,7 +51,7 @@ def main_menu() -> int:
     console.clear()
     menu = Panel.fit(
         "[bold cyan]Cloudflare Pages Batch Scripts[/]\n\n"
-        "  [bold]1.[/]  批量删除    查询 CF → 删除自定义域 + 项目 + KV\n"
+        "  [bold]1.[/]  批量删除    按配置删除自定义域 + 项目 + KV\n"
         "  [bold]2.[/]  批量部署    创建/更新 Pages 项目并上传源码\n"
         "  [bold]Q.[/]  退出",
         border_style="cyan",

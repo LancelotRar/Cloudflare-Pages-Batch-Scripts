@@ -11,7 +11,7 @@
 
 ---
 
-多账号 Cloudflare Pages 批量部署/删除工具。从源码仓库下载 → 创建/更新 Pages 项目 → 配置环境变量 + KV 绑定 + 自定义域名 → 部署，全流程自动化。
+多账号 Cloudflare Pages 批量部署/删除工具。从 ZIP 下载源码 → 创建 Pages 项目 → wrangler 上传 → 配置环境变量 + KV 绑定 + 自定义域名 → 重新部署，全流程自动化。
 
 > [!TIP]  
 > 可搭配 [edgetunnel项目](https://github.com/cmliu/edgetunnel) 实现快速批量部署、批量重建多Cloudflare账号下的Pages项目，实现请求数叠加；并通过重建自定义域实现断流管控。[请求数叠加教程。](https://blog.cmliussss.com/p/edt2)
@@ -22,19 +22,19 @@
 
 对每个账号自动执行：
 
-1. 通过 CF API 创建 Pages 项目（不存在时自动创建）
+1. 通过 CF API 创建 Pages 项目（已存在则跳过）
 2. `wrangler pages deploy` 上传源码
-3. 创建 KV 命名空间、设置环境变量、添加自定义域名
-4. 配置生效后重新部署
+3. 配置项目：创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 添加自定义域名
+4. `wrangler pages deploy` 重新部署使配置生效
 
 ### 批量删除
 
 对每个账号自动执行：
 
-1. 列出该账号下所有 Pages 项目
-2. 灵活选择（`1,3` / `1-5` / `A` 全选）
-3. 删除域名 → 清理旧部署 → 删除项目
-4. 可选删除 KV 命名空间
+1. 选择要操作的账号
+2. 按配置删除自定义域名
+3. 按配置删除 Pages 项目
+4. 按配置删除 KV 命名空间（需查询 ID）
 
 ### 特性
 
@@ -149,6 +149,29 @@ cf_pages_batch_scripts -c /path/to/config.yaml
 编辑 `config.yaml`（从 `config.yaml.example` 复制而来）。示例中包含 5 个账号配置，覆盖不同场景：
 
 ```yaml
+# YAML 锚点，复用同名配置
+Myenv: &Myenv
+  env:
+    - name: UUID
+      type: plain_text
+      value: 550e8400-e29b-41d4-a716-446655440000
+
+Mypageskvyes: &Mypageskvyes
+  project_name: my-project
+  domain: my-domain.com
+  kv_create: true
+  kv_namespace: my-kv
+  kv_binding: true
+  kv_binding_env: KV
+  project_type: production
+
+Mypageskvno: &Mypageskvno
+  project_name: my-preview-app
+  kv_create: true
+  kv_namespace: my-preview-kv
+  kv_binding: false
+  project_type: preview
+
 files_to_redeploy:
   dir: files-to-redeploy
   download_url: https://example.com/source.zip
@@ -160,13 +183,7 @@ accounts:
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx1
     account_id: a1b2c3d4e5f6a1b2c3d4e5f6
     pages:
-      project_name: my-project
-      domain: my-domain.com
-      kv_create: true
-      kv_namespace: my-kv
-      kv_binding: true
-      kv_binding_env: KV
-      project_type: production
+      <<: *Mypageskvyes
     env:
       - name: UUID
         type: plain_text
@@ -186,11 +203,7 @@ accounts:
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx3
     account_id: c3d4e5f6a1b2c3d4e5f6a1b2
     pages:
-      project_name: my-preview-app
-      kv_create: true
-      kv_namespace: my-preview-kv
-      kv_binding: false
-      project_type: preview
+      <<: *Mypageskvno
 
   # 账号 4 — 禁用账号（被跳过）
   - name: my-account
@@ -207,13 +220,11 @@ accounts:
     token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx5
     account_id: e5f6a1b2c3d4e5f6a1b2c3d4
     pages:
+      <<: *Mypageskvyes
       project_name: my-env-rich-app
       domain: env-rich.example.com
-      kv_create: true
       kv_namespace: my-rich-kv
-      kv_binding: true
       kv_binding_env: MY_KV
-      project_type: production
     env:
       - name: API_KEY
         type: secret_text
@@ -241,7 +252,7 @@ accounts:
 | | `kv_create` | 是否自动创建 KV 命名空间 |
 | | `kv_namespace` | KV 命名空间标题 |
 | | `kv_binding` | 是否将 KV 绑定到项目 |
-| | `kv_binding_env` | KV 绑定的环境变量名，默认 `KV` |
+| | `kv_binding_env` | KV 绑定的环境变量名，不填则绑定名为空 |
 | | `project_type` | `production` 或 `preview` |
 | `accounts[].env[]` | `name` | 环境变量名 |
 | | `type` | `plain_text` 或 `secret_text` |
@@ -259,21 +270,23 @@ accounts:
 
 对每个选中的账号依次执行：
 
-1. **检查/创建项目** — 通过 CF API 创建 Pages 项目（若不存在）
-2. **首次上传** — `wrangler pages deploy` 部署源码
-3. **配置项目** — 创建 KV 命名空间 → 设置环境变量 + KV 绑定 → 添加自定义域名
-4. **二次上传** — 配置生效后重新部署
+1. **创建项目** — 通过 CF API 创建 Pages 项目（已存在则跳过）
+2. **上传部署** — `wrangler pages deploy` 上传源码
+3. **配置项目** — 创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 添加自定义域名
+4. **重新部署** — 再次 `wrangler pages deploy` 使配置生效
 
-> 为什么需要二次上传？Cloudflare Pages 的项目配置（环境变量、KV 绑定、域名）在首次部署后设置，需要再次部署让配置生效。
+> 为什么需要重新部署？Cloudflare Pages 的项目配置（环境变量、KV 绑定、域名）在首次部署后设置，需要再次部署让配置生效。
 
 ### 批量删除
 
 对每个选中的账号依次执行：
 
-1. 列出该账号下所有 Pages 项目
-2. 选择要删除的项目（支持 `1,3` / `1-5` / `A` 全选）
-3. 删除自定义域名 → 清理旧部署（超过 50 个时提示）→ 删除项目
-4. 可选删除 KV 命名空间（会标注哪些仍绑定到项目）
+1. 选择要操作的账号
+2. 按 `config.yaml` 配置删除自定义域名
+3. 按配置删除 Pages 项目
+4. 按配置删除 KV 命名空间（需查询 ID）
+
+> 删除流程以 `config.yaml` 为唯一来源，不查询 CF 上实际存在的项目列表。
 
 ---
 
