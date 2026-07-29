@@ -447,46 +447,62 @@ def delete_workflow(cfg: Config):
         return
 
     print_header("批量删除")
-    print_info("将对每个账号依次执行：")
-    print_info("  1. 删除所有 Pages 项目（含自定义域名）")
-    print_info("  2. 删除所有 KV 命名空间")
-    print()
 
     for account in selected_accounts:
         with CfApiClient(account.account_id, account.token) as api:
             print_header(f"--- {account.name} ---")
 
-            # 删除所有 Pages 项目
+            # 选择并删除 Pages 项目
             print_info("正在查询项目 ...")
             projects = api.list_projects()
-            if projects:
-                print_info(f"  找到 {len(projects)} 个项目，正在删除 ...")
-                for proj in projects:
-                    proj_name = proj.get("name", "")
-                    print(f"\n  --- {proj_name} ---")
 
+            if projects:
+                proj_items = []
+                for i, proj in enumerate(projects, 1):
+                    name = proj.get("name", "")
                     domains = [
                         d for d in proj.get("domains", [])
-                        if d != f"{proj_name}.pages.dev"
+                        if d != f"{name}.pages.dev"
                     ]
-                    for domain in domains:
-                        print_info(f"  正在删除域名 '{domain}' ...")
-                        result = api.delete_domain(proj_name, domain)
-                        if result and result.get("success"):
-                            print_ok(f"    已删除域名 {domain}")
-                        else:
-                            print_warn(f"    域名删除可能失败：{domain}")
+                    domain_str = f" | 域名：{', '.join(domains)}" if domains else ""
+                    proj_items.append({
+                        "index": i,
+                        "name": name,
+                        "project": proj,
+                        "domains": domains,
+                    })
+                    print(f"  [{i}] {name}{domain_str}")
 
-                    print_info(f"  正在删除项目 '{proj_name}' ...")
-                    result = api.delete_project(proj_name)
-                    if result and result.get("success"):
-                        print_ok(f"  已删除 {proj_name}")
-                    else:
-                        print_error(f"  失败：{proj_name}")
+                print("  [A]ll 全部")
+                print("  [Q]uit 退出")
+                print()
+
+                sel = input("输入序号删除（如 '1,3' 或 '1-3'），[A]ll 全选，回车跳过: ").strip()
+                if sel and sel.lower() != "q":
+                    selected_projs = parse_selection(sel, proj_items)
+                    if selected_projs:
+                        for item in selected_projs:
+                            proj_name = item["name"]
+                            print(f"\n  --- {proj_name} ---")
+
+                            for domain in item["domains"]:
+                                print_info(f"  正在删除域名 '{domain}' ...")
+                                result = api.delete_domain(proj_name, domain)
+                                if result and result.get("success"):
+                                    print_ok(f"    已删除域名 {domain}")
+                                else:
+                                    print_warn(f"    域名删除可能失败：{domain}")
+
+                            print_info(f"  正在删除项目 '{proj_name}' ...")
+                            result = api.delete_project(proj_name)
+                            if result and result.get("success"):
+                                print_ok(f"  已删除 {proj_name}")
+                            else:
+                                print_error(f"  失败：{proj_name}")
             else:
                 print_info(f"  {account.name} 未找到 Pages 项目，跳过项目删除")
 
-            # 删除所有 KV 命名空间
+            # 自动删除所有 KV 命名空间
             print(f"\n  --- {account.name} 的 KV 命名空间 ---")
             kvs = api.list_kv_namespaces()
             if kvs:
@@ -504,3 +520,4 @@ def delete_workflow(cfg: Config):
                 print_info("  未找到 KV 命名空间")
 
     print_ok("========== 删除完成 ==========")
+    wait_enter()
