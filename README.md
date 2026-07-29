@@ -149,13 +149,6 @@ cf_pages_batch_scripts -c /path/to/config.yaml
 编辑 `config.yaml`（从 `config.yaml.example` 复制而来）。示例中包含 5 个账号配置，覆盖不同场景：
 
 ```yaml
-# YAML 锚点，复用同名配置
-Myenv: &Myenv
-  env:
-    - name: UUID
-      type: plain_text
-      value: 550e8400-e29b-41d4-a716-446655440000
-
 Mypageskvyes: &Mypageskvyes
   project_name: my-project
   domain: my-domain.com
