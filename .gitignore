@@ -22,7 +22,7 @@ AGENTS.md
 .wrangler/
 files-to-redeploy/
 .codegraph/
-*.yaml
+/config.yaml
 
 # OS
 .DS_Store
