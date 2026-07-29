@@ -6,6 +6,7 @@ dist/
 build/
 .venv/
 .pytest_cache/
+tests/
 
 # Ruff
 .ruff_cache/

@@ -17,7 +17,7 @@ class PagesConfig:
     kv_create: bool = False
     kv_namespace: str = ""
     kv_binding: bool = False
-    kv_binding_env: str = "KV"
+    kv_binding_env: str = ""
     project_type: str = "production"
 
 

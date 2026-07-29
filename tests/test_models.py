@@ -35,7 +35,7 @@ class TestPagesConfig:
         assert pc.domain == ""
         assert pc.kv_create is False
         assert pc.kv_binding is False
-        assert pc.kv_binding_env == "KV"
+        assert pc.kv_binding_env == ""
         assert pc.project_type == "production"
 
     def test_full_config(self):
