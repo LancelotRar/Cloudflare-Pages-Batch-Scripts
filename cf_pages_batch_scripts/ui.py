@@ -89,6 +89,7 @@ def select_accounts(accounts: list) -> list:
 
     console.print(table)
     console.print("\n[yellow][A]ll[/] 全部账号")
+    console.print("[yellow]#[/] 输入序号（如 [bold]1[/] 或 [bold]1,3,5[/]）选择单个或多个账号")
     console.print("[yellow][Q]uit[/] 退出\n")
 
     sel = Prompt.ask("请选择", default="q")
