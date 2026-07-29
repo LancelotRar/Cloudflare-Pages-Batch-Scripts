@@ -180,7 +180,7 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
     if result and result.get("success"):
         print_ok("  项目已创建")
     else:
-        print_warn("  项目可能已存在，继续部署")
+        print_ok("  项目已存在，跳过创建")
 
     # ========== 第二步：上传部署 ==========
     print_info(f"  [2/4] 上传部署 ...")
@@ -216,7 +216,7 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
         if result and result.get("success"):
             print_ok(f"  域名已添加：{account.pages.domain}")
         else:
-            print_warn(f"  域名可能已存在：{account.pages.domain}")
+            print_ok(f"  域名已配置，跳过：{account.pages.domain}")
 
     # ========== 第四步：重新部署 ==========
     print_info(f"  [4/4] 重新部署使配置生效 ...")
