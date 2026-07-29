@@ -290,25 +290,6 @@ accounts:
 
 ---
 
-## 开发
-
-```powershell
-# 激活虚拟环境
-.venv\Scripts\activate
-
-# 安装测试依赖
-pip install pytest pytest-httpx
-
-# 运行全部测试
-python -m pytest tests/ -v
-
-# 代码检查（需安装 ruff）
-pip install ruff
-ruff check cf_pages_batch_scripts/
-```
-
----
-
 ## 项目结构
 
 ```
@@ -322,7 +303,6 @@ cf_pages_batch_scripts/
 │   ├── ui.py              # 交互界面（基于 Rich）
 │   └── workflows.py       # 部署/删除工作流逻辑
 ├── config.yaml.example    # 配置文件模板
-├── config.yaml            # 用户配置（已 gitignore）
 ├── pyproject.toml         # 项目元数据与依赖声明
 └── README.md
 ```
