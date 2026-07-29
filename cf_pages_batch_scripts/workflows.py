@@ -477,22 +477,24 @@ def delete_workflow(cfg: Config):
             else:
                 print_info(f"  项目 '{proj_name}' 不存在，跳过")
 
-            # 自动删除所有 KV 命名空间
-            print(f"\n  --- {account.name} 的 KV 命名空间 ---")
-            kvs = api.list_kv_namespaces()
-            if kvs:
-                print_info(f"  找到 {len(kvs)} 个 KV 命名空间，正在删除 ...")
-                for ns in kvs:
-                    title = ns.get("title", "")
-                    ns_id = ns.get("id", "")
-                    print_info(f"  正在删除 KV 命名空间 '{title}' ...")
-                    result = api.delete_kv_namespace(ns_id)
-                    if result and result.get("success"):
-                        print_ok(f"    已删除 {title}")
-                    else:
-                        print_error(f"    失败：{title}")
+            # 删除配置中指定的 KV 命名空间
+            kv_name = account.pages.kv_namespace
+            if kv_name:
+                print_info(f"正在查找 KV 命名空间 '{kv_name}' ...")
+                for ns in api.list_kv_namespaces():
+                    if ns.get("title") == kv_name:
+                        ns_id = ns.get("id", "")
+                        print_info(f"  正在删除 KV 命名空间 '{kv_name}' ...")
+                        result = api.delete_kv_namespace(ns_id)
+                        if result and result.get("success"):
+                            print_ok(f"    已删除 {kv_name}")
+                        else:
+                            print_error(f"    失败：{kv_name}")
+                        break
+                else:
+                    print_info(f"  KV 命名空间 '{kv_name}' 不存在，跳过")
             else:
-                print_info("  未找到 KV 命名空间")
+                print_info("  未配置 kv_namespace，跳过 KV 删除")
 
     print_ok("========== 删除完成 ==========")
     wait_enter()
