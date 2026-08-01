@@ -90,17 +90,7 @@ copy config.yaml.example config.yaml
 
 编辑 `config.yaml`，填入你的 Cloudflare API Token 和 Pages 项目信息：
 
-```yaml
-accounts:
-  - name: my-account
-    enabled: true
-    token: cfat_xxxxx            # 你的 Cloudflare API Token
-    account_id: xxxxxx           # 你的账户 ID
-    pages:
-      project_name: my-project   # Pages 项目名
-      domain: my-domain.com      # 自定义域名（可选）
-      kv_namespace: my-kv        # KV 命名空间（可选）
-```
+见下方配置示例
 
 ### 2. 运行
 
@@ -165,81 +155,57 @@ cf_pages_batch_scripts -c /path/to/config.yaml
 编辑 `config.yaml`（从 `config.yaml.example` 复制而来）。示例中包含 5 个账号配置，覆盖不同场景：
 
 ```yaml
+Myenv: &Myenv [{name: UUID, type: plain_text, value: 550e8400-e28b-41d4-a716-446655440000}, {name: ADMIN, type: plain_text, value: your-password}]
+Mypageskvyes: &Mypageskvyes {kv_create: true, kv_binding: true, kv_binding_env: KV, project_type: production}
+Mypageskvno: &Mypageskvno {kv_create: false, kv_binding: false, project_type: production}
+
 files_to_redeploy:
   dir: files-to-redeploy
   download_url: https://example.com/source.zip
 
 accounts:
-  # 账号 1 — 完整配置：含自定义域名 + KV + 环境变量
-  - name: my-account
-    enabled: true
-    token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx1
-    account_id: a1b2c3d4e5f6a1b2c3d4e5f6
-    pages:
-      project_name: my-project
-      domain: my-domain.com
-      kv_create: true
-      kv_namespace: my-kv
-      kv_binding: true
-      kv_binding_env: KV
-      project_type: production
-    env:
-      - name: UUID
-        type: plain_text
-        value: 550e8400-e29b-41d4-a716-446655440000
-
-  # 账号 2 — 最小配置：仅必填字段，无域名无 KV
-  - name: my-account
-    enabled: true
-    token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx2
-    account_id: b2c3d4e5f6a1b2c3d4e5f6a1
-    pages:
-      project_name: my-minimal-project
-
-  # 账号 3 — preview 类型项目，带 KV 但不绑定
-  - name: my-account
-    enabled: true
-    token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx3
-    account_id: c3d4e5f6a1b2c3d4e5f6a1b2
-    pages:
-      project_name: my-preview-app
-      kv_create: true
-      kv_namespace: my-preview-kv
-      kv_binding: false
-      project_type: preview
-
-  # 账号 4 — 禁用账号（enabled: false，会被跳过）
-  - name: my-account
+  - name: account-01
     enabled: false
-    token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx4
-    account_id: d4e5f6a1b2c3d4e5f6a1b2c3
+    token: cfat_0000000000000000000000000000000000000001
+    account_id: 00000000000000000000000000000001
     pages:
-      project_name: my-disabled-project
-      domain: disabled.example.com
+      <<: *Mypageskvyes
+      project_name: my-project-01
+      domain: my-project-01.example.com
+      kv_namespace: my-project-01
+    env: *Myenv
 
-  # 账号 5 — 多环境变量 + 自定义 KV 绑定名
-  - name: my-account
-    enabled: true
-    token: cfat_xxxxxxxxxxxxxxxxxxxxxxxxxx5
-    account_id: e5f6a1b2c3d4e5f6a1b2c3d4
+  - name: account-02
+    enabled: false
+    token: cfat_0000000000000000000000000000000000000002
+    account_id: 00000000000000000000000000000002
     pages:
-      project_name: my-env-rich-app
-      domain: env-rich.example.com
-      kv_create: true
-      kv_namespace: my-rich-kv
-      kv_binding: true
-      kv_binding_env: MY_KV
-      project_type: production
-    env:
-      - name: API_KEY
-        type: secret_text
-        value: sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
-      - name: DATABASE_URL
-        type: plain_text
-        value: postgres://user:pass@localhost:5432/db
-      - name: DEBUG
-        type: plain_text
-        value: "false"
+      <<: *Mypageskvyes
+      project_name: my-project-02
+      domain: my-project-02.example.com
+      kv_namespace: my-project-02
+    env: *Myenv
+
+  - name: account-03
+    enabled: true
+    token: cfat_0000000000000000000000000000000000000003
+    account_id: 00000000000000000000000000000003
+    pages:
+      <<: *Mypageskvno
+      project_name: my-project-03
+      domain: my-project-03.example.com
+    env: *Myenv
+
+  - name: account-04
+    enabled: true
+    token: cfat_0000000000000000000000000000000000000004
+    account_id: 00000000000000000000000000000004
+    pages:
+      <<: *Mypageskvno
+      project_name: my-project-04
+      domain: my-project-04.example.com
+    env: *Myenv
+
 ```
 
 ### 参数说明
