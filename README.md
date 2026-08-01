@@ -152,7 +152,7 @@ cf_pages_batch_scripts -c /path/to/config.yaml
 
 ## 配置文件
 
-编辑 `config.yaml`（从 `config.yaml.example` 复制而来）。示例中包含 5 个账号配置，覆盖不同场景：
+编辑 `config.yaml`（从 `config.yaml.example` 复制而来）。示例中包含 4 个账号配置。
 
 ```yaml
 Myenv: &Myenv [{name: UUID, type: plain_text, value: 550e8400-e28b-41d4-a716-446655440000}, {name: ADMIN, type: plain_text, value: your-password}]
