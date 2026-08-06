@@ -310,18 +310,22 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
     if account.pages.domain and not sync_project_domain(api, project, account.pages.domain):
         return False
 
-    # DNS 记录
-    if not sync_dns_record(api, account):
-        return False
-
     # ========== 第四步：重新部署 ==========
     print_info(f"  [4/4] 重新部署使配置生效 ...")
-    if _run_wrangler(source_dir, project, account.token, account.account_id, "重新部署"):
-        print_ok(f"  ✅ 项目 '{project}' 已完全部署并配置完成")
-        return True
-    else:
+    if not _run_wrangler(source_dir, project, account.token, account.account_id, "重新部署"):
         print_error("  重新部署失败")
         return False
+    print_ok(f"  ✅ 项目 '{project}' 已完全部署并配置完成")
+
+    # DNS 是部署后的独立操作，失败不影响项目部署结果
+    try:
+        dns_synced = sync_dns_record(api, account)
+    except Exception as exc:
+        print_warn(f"  DNS 同步异常，但项目 '{project}' 已部署成功：{exc}")
+        dns_synced = True
+    if not dns_synced:
+        print_warn(f"  DNS 同步失败，但项目 '{project}' 已部署成功")
+    return True
 
 
 def deploy_workflow(cfg: Config):
@@ -346,8 +350,9 @@ def deploy_workflow(cfg: Config):
     print_info("将对每个账号依次执行：")
     print_info("  1. 创建项目（通过 CF API）")
     print_info("  2. 部署源码：wrangler pages deploy")
-    print_info("  3. 配置项目：KV 命名空间 → 环境变量 + KV 绑定 → 自定义域名 → DNS 记录")
+    print_info("  3. 配置项目：KV 命名空间 → 环境变量 + KV 绑定 → 自定义域名")
     print_info("  4. 重新部署使配置生效")
+    print_info("  5. 同步 DNS 记录（失败不影响项目部署）")
     print()
 
     print_info(">> 正在准备源码文件 ...")
