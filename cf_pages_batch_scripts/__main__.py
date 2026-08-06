@@ -28,9 +28,9 @@ def main():
             if choice == 0:
                 break
             elif choice == 1:
-                delete_workflow(cfg)
-            elif choice == 2:
                 deploy_workflow(cfg)
+            elif choice == 2:
+                delete_workflow(cfg)
         except KeyboardInterrupt:
             break
         except Exception as e:
