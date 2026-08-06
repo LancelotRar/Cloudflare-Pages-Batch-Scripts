@@ -47,12 +47,12 @@ def confirm(prompt_text: str = "确认？") -> bool:
 
 
 def main_menu() -> int:
-    """显示主菜单。返回：0=退出, 1=批量删除, 2=批量部署"""
+    """显示主菜单。返回：0=退出, 1=批量部署, 2=批量删除"""
     console.clear()
     menu = Panel.fit(
         "[bold cyan]Cloudflare Pages Batch Scripts[/]\n\n"
-        "  [bold]1.[/]  批量删除\n"
-        "  [bold]2.[/]  批量部署\n"
+        "  [bold]1.[/]  批量部署\n"
+        "  [bold]2.[/]  批量删除\n"
         "  [bold]Q.[/]  退出",
         border_style="cyan",
     )
