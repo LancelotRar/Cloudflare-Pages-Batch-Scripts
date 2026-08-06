@@ -57,6 +57,7 @@ def _parse_pages_config(raw_pages: dict) -> PagesConfig:
         kv_namespace=_get_str(raw_pages, "kv_namespace"),
         kv_binding=_get_bool(raw_pages, "kv_binding"),
         kv_binding_env=_get_str(raw_pages, "kv_binding_env"),
+        kv_configured=any(key in raw_pages for key in ("kv_create", "kv_namespace", "kv_binding", "kv_binding_env")),
         project_type=_get_str(raw_pages, "project_type", "production"),
         env=_parse_env_vars(raw_pages),
     )

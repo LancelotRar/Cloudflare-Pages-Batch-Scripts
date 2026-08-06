@@ -1,4 +1,5 @@
 import time
+from urllib.parse import quote
 
 import httpx
 
@@ -85,7 +86,7 @@ class CfApiClient:
         return []
 
     def get_project(self, name: str) -> dict | None:
-        data = self._request("GET", f"/pages/projects/{name}")
+        data = self._request("GET", f"/pages/projects/{quote(name, safe='')}")
         if data and data.get("success"):
             return data["result"]
         return None
@@ -97,10 +98,10 @@ class CfApiClient:
         })
 
     def delete_project(self, name: str) -> dict | None:
-        return self._request("DELETE", f"/pages/projects/{name}")
+        return self._request("DELETE", f"/pages/projects/{quote(name, safe='')}")
 
     def patch_project_config(self, name: str, deployment_configs: dict) -> bool:
-        data = self._request("PATCH", f"/pages/projects/{name}", {
+        data = self._request("PATCH", f"/pages/projects/{quote(name, safe='')}", {
             "deployment_configs": deployment_configs,
         })
         return data is not None and data.get("success", False)
@@ -115,18 +116,22 @@ class CfApiClient:
         return self._request("DELETE", f"/pages/projects/{project_name}/deployments/{deployment_id}")
 
     def add_domain(self, project_name: str, domain: str) -> dict | None:
-        return self._request("POST", f"/pages/projects/{project_name}/domains", {
+        project_path = quote(project_name, safe="")
+        return self._request("POST", f"/pages/projects/{project_path}/domains", {
             "name": domain,
         })
 
     def list_domains(self, project_name: str) -> list[dict] | None:
-        data = self._request("GET", f"/pages/projects/{project_name}/domains")
+        project_path = quote(project_name, safe="")
+        data = self._request("GET", f"/pages/projects/{project_path}/domains")
         if data and data.get("success"):
             return data.get("result", [])
         return None
 
     def delete_domain(self, project_name: str, domain: str) -> dict | None:
-        return self._request("DELETE", f"/pages/projects/{project_name}/domains/{domain}")
+        project_path = quote(project_name, safe="")
+        domain_path = quote(domain, safe="")
+        return self._request("DELETE", f"/pages/projects/{project_path}/domains/{domain_path}")
 
     def list_dns_records(self, zone_id: str) -> list[dict] | None:
         results: list[dict] = []
@@ -149,6 +154,10 @@ class CfApiClient:
     def update_dns_record(self, zone_id: str, record_id: str, record: dict) -> dict | None:
         url = f"{CF_API_BASE}/zones/{zone_id}/dns_records/{record_id}"
         return self._request_url("PUT", url, record)
+
+    def delete_dns_record(self, zone_id: str, record_id: str) -> dict | None:
+        url = f"{CF_API_BASE}/zones/{zone_id}/dns_records/{record_id}"
+        return self._request_url("DELETE", url)
 
     def list_kv_namespaces(self) -> list[dict]:
         return self._paginated_get("/storage/kv/namespaces")
