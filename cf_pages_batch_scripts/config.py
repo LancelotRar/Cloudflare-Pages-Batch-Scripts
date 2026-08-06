@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from .models import Account, Config, EnvVar, FilesToRedeploy, PagesConfig
+from .models import Account, Config, DnsConfig, EnvVar, FilesToRedeploy, PagesConfig
 
 
 def _get_str(d: dict, key: str, default: str = "") -> str:
@@ -40,11 +40,11 @@ def _parse_files_to_redeploy(raw: dict | None) -> FilesToRedeploy:
     )
 
 
-def _parse_env_vars(raw_acct: dict) -> list[EnvVar]:
+def _parse_env_vars(raw_pages: dict) -> list[EnvVar]:
     """从原始 YAML dict 解析环境变量列表。"""
     return [
         EnvVar(name=_get_str(ev, "name"), var_type=_get_str(ev, "type"), value=_get_str(ev, "value"))
-        for ev in raw_acct.get("env", [])
+        for ev in raw_pages.get("env", [])
     ]
 
 
@@ -58,6 +58,21 @@ def _parse_pages_config(raw_pages: dict) -> PagesConfig:
         kv_binding=_get_bool(raw_pages, "kv_binding"),
         kv_binding_env=_get_str(raw_pages, "kv_binding_env"),
         project_type=_get_str(raw_pages, "project_type", "production"),
+        env=_parse_env_vars(raw_pages),
+    )
+
+
+def _parse_dns_config(raw_dns: dict) -> DnsConfig:
+    """从原始 YAML dict 解析 DnsConfig。"""
+    raw_ttl = raw_dns.get("ttl", 1)
+    ttl = 1 if str(raw_ttl).lower() == "auto" else int(raw_ttl)
+    return DnsConfig(
+        zone_id=_get_str(raw_dns, "zone_id"),
+        record_type=_get_str(raw_dns, "type", "CNAME").upper(),
+        name=_get_str(raw_dns, "name"),
+        content=_get_str(raw_dns, "content"),
+        proxied=_get_bool(raw_dns, "proxied"),
+        ttl=ttl,
     )
 
 
@@ -71,7 +86,7 @@ def _parse_accounts(raw: dict | None) -> list[Account]:
             token=_get_str(raw_acct, "token"),
             account_id=_get_str(raw_acct, "account_id"),
             pages=_parse_pages_config(raw_acct.get("pages", {})),
-            env=_parse_env_vars(raw_acct),
+            dns=_parse_dns_config(raw_acct.get("dns", {})),
         ))
     return accounts
 

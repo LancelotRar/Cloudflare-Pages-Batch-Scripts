@@ -71,7 +71,7 @@ def prepare_source(cfg: Config) -> Path | None:
 def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = None) -> bool:
     """Set environment variables and KV binding on a Pages project via PATCH."""
     env_vars = {}
-    for ev in account.env:
+    for ev in account.pages.env:
         if ev.value:
             env_vars[ev.name] = {"value": ev.value, "type": ev.var_type}
 
@@ -132,6 +132,68 @@ def sync_project_domain(api: CfApiClient, project: str, target_domain: str) -> b
         print_error(f"  添加域名失败：{target_domain}")
         return False
     print_ok(f"  域名已添加：{target_domain}")
+    return True
+
+
+def sync_dns_record(api: CfApiClient, account: Account) -> bool:
+    """Create or update the configured DNS record."""
+    dns = account.dns
+    if not dns.zone_id or not dns.name or not dns.content:
+        return True
+
+    print_info(f"  正在查询 DNS 记录 '{dns.name}' ...")
+    records = api.list_dns_records(dns.zone_id)
+    if records is None:
+        print_error("  查询 DNS 记录失败")
+        return False
+
+    target_name = dns.name.rstrip(".").lower()
+    matches = [
+        record
+        for record in records
+        if str(record.get("type", "")).upper() == dns.record_type
+        and str(record.get("name", "")).rstrip(".").lower() == target_name
+    ]
+    if len(matches) > 1:
+        print_error(f"  找到多条同名同类型 DNS 记录，无法安全修改：{dns.name}")
+        return False
+
+    payload = {
+        "type": dns.record_type,
+        "name": dns.name,
+        "content": dns.content,
+        "proxied": dns.proxied,
+        "ttl": dns.ttl,
+    }
+    if not matches:
+        print_info(f"  正在创建 DNS 记录 '{dns.name}' ...")
+        result = api.create_dns_record(dns.zone_id, payload)
+        if not result or not result.get("success"):
+            print_error(f"  创建 DNS 记录失败：{dns.name}")
+            return False
+        print_ok(f"  DNS 记录已创建：{dns.name} -> {dns.content}")
+        return True
+
+    current = matches[0]
+    is_current = (
+        str(current.get("content", "")).rstrip(".").lower() == dns.content.rstrip(".").lower()
+        and current.get("proxied", False) is dns.proxied
+        and current.get("ttl") == dns.ttl
+    )
+    if is_current:
+        print_ok(f"  DNS 记录已是目标配置，跳过：{dns.name}")
+        return True
+
+    record_id = current.get("id")
+    if not isinstance(record_id, str) or not record_id:
+        print_error(f"  DNS 记录缺少 ID，无法修改：{dns.name}")
+        return False
+    print_info(f"  正在修改 DNS 记录 '{dns.name}' ...")
+    result = api.update_dns_record(dns.zone_id, record_id, payload)
+    if not result or not result.get("success"):
+        print_error(f"  修改 DNS 记录失败：{dns.name}")
+        return False
+    print_ok(f"  DNS 记录已修改：{dns.name} -> {dns.content}")
     return True
 
 
@@ -248,6 +310,10 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
     if account.pages.domain and not sync_project_domain(api, project, account.pages.domain):
         return False
 
+    # DNS 记录
+    if not sync_dns_record(api, account):
+        return False
+
     # ========== 第四步：重新部署 ==========
     print_info(f"  [4/4] 重新部署使配置生效 ...")
     if _run_wrangler(source_dir, project, account.token, account.account_id, "重新部署"):
@@ -280,7 +346,7 @@ def deploy_workflow(cfg: Config):
     print_info("将对每个账号依次执行：")
     print_info("  1. 创建项目（通过 CF API）")
     print_info("  2. 部署源码：wrangler pages deploy")
-    print_info("  3. 配置项目：KV 命名空间 → 环境变量 + KV 绑定 → 自定义域名")
+    print_info("  3. 配置项目：KV 命名空间 → 环境变量 + KV 绑定 → 自定义域名 → DNS 记录")
     print_info("  4. 重新部署使配置生效")
     print()
 
