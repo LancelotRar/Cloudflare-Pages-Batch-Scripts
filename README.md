@@ -11,7 +11,7 @@
 
 ---
 
-多账号 Cloudflare Pages 批量部署/删除工具。从 ZIP 下载源码 → 创建 Pages 项目 → wrangler 上传 → 配置环境变量 + KV 绑定 + 自定义域名 → 重新部署，全流程自动化。
+多账号 Cloudflare Pages 批量部署/删除工具。从 ZIP 下载源码 → 创建 Pages 项目 → wrangler 上传 → 配置环境变量 + KV 绑定 + 自定义域名 + DNS 记录 → 重新部署，全流程自动化。
 
 > [!TIP]  
 > 可搭配 [edgetunnel项目](https://github.com/cmliu/edgetunnel) 实现快速批量部署、批量重建多Cloudflare账号下的Pages项目，实现请求数叠加；并通过重建自定义域实现断流管控。[请求数叠加教程。](https://blog.cmliussss.com/p/edt2)
@@ -52,7 +52,7 @@
 | **Python 3.10+** | 运行环境 |
 | **Node.js** (LTS) | wrangler CLI 运行环境，[下载](https://nodejs.org/) |
 | **wrangler CLI** | Cloudflare 官方 CLI，`npm install -g wrangler` |
-| **Cloudflare API Token** | 需有 Pages 读写权限，在 [API Tokens](https://dash.cloudflare.com/profile/api-tokens) 创建 |
+| **Cloudflare API Token** | 需有 Pages 读写、Zone 读取和 DNS 编辑权限，在 [API Tokens](https://dash.cloudflare.com/profile/api-tokens) 创建 |
 
 验证 wrangler 安装：
 
@@ -158,6 +158,7 @@ cf_pages_batch_scripts -c /path/to/config.yaml
 Myenv: &Myenv [{name: UUID, type: plain_text, value: 550e8400-e28b-41d4-a716-446655440000}, {name: ADMIN, type: plain_text, value: your-password}]
 Mypageskvyes: &Mypageskvyes {kv_create: true, kv_binding: true, kv_binding_env: KV, project_type: production}
 Mypageskvno: &Mypageskvno {kv_create: false, kv_binding: false, project_type: production}
+MyDNS: &MyDNS {zone_id: 00000000000000000000000000000000, type: CNAME, proxied: false, ttl: auto}
 
 files_to_redeploy:
   dir: files-to-redeploy
@@ -173,7 +174,11 @@ accounts:
       project_name: my-project-01
       domain: my-project-01.example.com
       kv_namespace: my-project-01
-    env: *Myenv
+      env: *Myenv
+    dns:
+      <<: *MyDNS
+      name: my-project-01.example.com
+      content: my-project-01.pages.dev
 
   - name: account-02
     enabled: false
@@ -184,7 +189,11 @@ accounts:
       project_name: my-project-02
       domain: my-project-02.example.com
       kv_namespace: my-project-02
-    env: *Myenv
+      env: *Myenv
+    dns:
+      <<: *MyDNS
+      name: my-project-02.example.com
+      content: my-project-02.pages.dev
 
   - name: account-03
     enabled: true
@@ -194,7 +203,11 @@ accounts:
       <<: *Mypageskvno
       project_name: my-project-03
       domain: my-project-03.example.com
-    env: *Myenv
+      env: *Myenv
+    dns:
+      <<: *MyDNS
+      name: my-project-03.example.com
+      content: my-project-03.pages.dev
 
   - name: account-04
     enabled: true
@@ -204,7 +217,11 @@ accounts:
       <<: *Mypageskvno
       project_name: my-project-04
       domain: my-project-04.example.com
-    env: *Myenv
+      env: *Myenv
+    dns:
+      <<: *MyDNS
+      name: my-project-04.example.com
+      content: my-project-04.pages.dev
 
 ```
 
@@ -225,9 +242,15 @@ accounts:
 | | `kv_binding` | 是否将 KV 绑定到项目 |
 | | `kv_binding_env` | KV 绑定的环境变量名，不填则绑定名为空 |
 | | `project_type` | `production` 或 `preview` |
-| `accounts[].env[]` | `name` | 环境变量名 |
+| `accounts[].pages.env[]` | `name` | 环境变量名 |
 | | `type` | `plain_text` 或 `secret_text` |
 | | `value` | 环境变量值 |
+| `accounts[].dns` | `zone_id` | DNS Zone ID |
+| | `type` | DNS 记录类型，默认 `CNAME` |
+| | `name` | 完整 DNS 记录名称 |
+| | `content` | DNS 记录目标值 |
+| | `proxied` | 是否启用 Cloudflare 代理 |
+| | `ttl` | TTL 秒数；`auto` 表示自动（API 值 `1`） |
 
 ### 多账号支持
 
@@ -243,12 +266,14 @@ accounts:
 
 1. **创建项目** — 通过 CF API 创建 Pages 项目（已存在则跳过）
 2. **上传部署** — `wrangler pages deploy` 上传源码
-3. **配置项目** — 创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 同步自定义域名
+3. **配置项目** — 创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 同步自定义域名 → 同步 DNS 记录
 4. **重新部署** — 再次 `wrangler pages deploy` 使配置生效
 
 > 为什么需要重新部署？Cloudflare Pages 的项目配置（环境变量、KV 绑定、域名）在首次部署后设置，需要再次部署让配置生效。
 
 配置了 `domain` 时，脚本会先查询项目当前绑定的自定义域名，删除所有与目标域名不同的旧域名，再添加目标域名。目标域名已经存在时不会重复添加；查询、删除或添加失败时会停止该账号的部署，避免继续执行最终重部署。
+
+配置完整的 `dns` 时，脚本会查询 Zone 中的全部 DNS 记录，按 `type + name` 精确匹配。记录不存在时创建，内容、代理状态或 TTL 不一致时修改，完全一致时跳过；查询、创建或修改失败会停止该账号的最终重部署。
 
 ### 批量删除
 

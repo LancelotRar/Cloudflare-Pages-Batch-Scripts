@@ -26,8 +26,12 @@ class CfApiClient:
         up to 3 attempts with 2/4/8s backoff.
         4xx errors and programming errors are NOT retried and are returned / raised.
         """
-        backoff = [2, 4, 8]
         url = f"{CF_API_BASE}/accounts/{self.account_id}{path}"
+        return self._request_url(method, url, body)
+
+    def _request_url(self, method: str, url: str, body: dict | None = None) -> dict | None:
+        """Make a request to an absolute Cloudflare API URL with retry logic."""
+        backoff = [2, 4, 8]
 
         for attempt in range(3):
             try:
@@ -123,6 +127,28 @@ class CfApiClient:
 
     def delete_domain(self, project_name: str, domain: str) -> dict | None:
         return self._request("DELETE", f"/pages/projects/{project_name}/domains/{domain}")
+
+    def list_dns_records(self, zone_id: str) -> list[dict] | None:
+        results: list[dict] = []
+        page = 1
+        while True:
+            url = f"{CF_API_BASE}/zones/{zone_id}/dns_records?page={page}&per_page=100"
+            data = self._request_url("GET", url)
+            if not data or not data.get("success"):
+                return None
+            results.extend(data.get("result", []))
+            total_pages = data.get("result_info", {}).get("total_pages", 1)
+            if page >= total_pages:
+                return results
+            page += 1
+
+    def create_dns_record(self, zone_id: str, record: dict) -> dict | None:
+        url = f"{CF_API_BASE}/zones/{zone_id}/dns_records"
+        return self._request_url("POST", url, record)
+
+    def update_dns_record(self, zone_id: str, record_id: str, record: dict) -> dict | None:
+        url = f"{CF_API_BASE}/zones/{zone_id}/dns_records/{record_id}"
+        return self._request_url("PUT", url, record)
 
     def list_kv_namespaces(self) -> list[dict]:
         return self._paginated_get("/storage/kv/namespaces")

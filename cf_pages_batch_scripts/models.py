@@ -19,6 +19,18 @@ class PagesConfig:
     kv_binding: bool = False
     kv_binding_env: str = ""
     project_type: str = "production"
+    env: list[EnvVar] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DnsConfig:
+    """单个 DNS 记录配置。"""
+    zone_id: str = ""
+    record_type: str = "CNAME"
+    name: str = ""
+    content: str = ""
+    proxied: bool = False
+    ttl: int = 1
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -29,7 +41,7 @@ class Account:
     token: str = field(repr=False)  # 敏感字段，不在 repr 中泄露
     account_id: str
     pages: PagesConfig
-    env: list[EnvVar] = field(default_factory=list)
+    dns: DnsConfig = field(default_factory=DnsConfig)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
