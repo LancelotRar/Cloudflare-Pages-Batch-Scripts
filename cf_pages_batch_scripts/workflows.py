@@ -69,33 +69,51 @@ def prepare_source(cfg: Config) -> Path | None:
 
 
 def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = None) -> bool:
-    """Set environment variables and KV binding on a Pages project via PATCH."""
-    env_vars = {}
-    for ev in account.pages.env:
-        if ev.value:
-            env_vars[ev.name] = {"value": ev.value, "type": ev.var_type}
-
-    cfg = {}
-    if env_vars:
-        cfg["env_vars"] = env_vars
-
-    if account.pages.kv_binding and ns_id:
-        cfg["kv_namespaces"] = {
-            account.pages.kv_binding_env: {"namespace_id": ns_id}
-        }
-
-    if not cfg:
+    """Converge managed environment variables and KV bindings."""
+    manage_env = bool(account.pages.env)
+    manage_kv = account.pages.kv_configured
+    if not manage_env and not manage_kv:
         return True
 
-    dep_cfg = {}
-    pt = account.pages.project_type
-    if pt == "production":
-        dep_cfg["production"] = cfg
-    elif pt == "preview":
-        dep_cfg["preview"] = cfg
-    else:
-        dep_cfg["production"] = cfg
-        dep_cfg["preview"] = cfg
+    project = api.get_project(account.pages.project_name)
+    if project is None:
+        print_error("  查询 Pages 项目配置失败")
+        return False
+
+    target_envs = [account.pages.project_type] if account.pages.project_type in {"production", "preview"} else ["production", "preview"]
+    current_configs = project.get("deployment_configs", {})
+    dep_cfg: dict[str, dict] = {}
+    managed_env_names = {ev.name for ev in account.pages.env if ev.name}
+    desired_env_vars = {
+        ev.name: {"value": ev.value, "type": ev.var_type}
+        for ev in account.pages.env
+        if ev.name and ev.value
+    }
+
+    for target_env in target_envs:
+        current = current_configs.get(target_env, {})
+        cfg: dict = {}
+        if manage_env:
+            current_env_vars = current.get("env_vars", {})
+            cfg["env_vars"] = {
+                **{name: None for name in current_env_vars if name not in managed_env_names},
+                **desired_env_vars,
+            }
+        if manage_kv:
+            current_kv = current.get("kv_namespaces", {})
+            desired_kv = {}
+            if account.pages.kv_binding:
+                if not ns_id or not account.pages.kv_binding_env:
+                    print_error("  KV 绑定已启用，但命名空间 ID 或绑定名无效")
+                    return False
+                desired_kv = {
+                    account.pages.kv_binding_env: {"namespace_id": ns_id}
+                }
+            cfg["kv_namespaces"] = {
+                **{name: None for name in current_kv if name not in desired_kv},
+                **desired_kv,
+            }
+        dep_cfg[target_env] = cfg
 
     return api.patch_project_config(account.pages.project_name, dep_cfg)
 
@@ -148,15 +166,38 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
         return False
 
     target_name = dns.name.rstrip(".").lower()
-    matches = [
+    same_name = [
         record
         for record in records
-        if str(record.get("type", "")).upper() == dns.record_type
-        and str(record.get("name", "")).rstrip(".").lower() == target_name
+        if str(record.get("name", "")).rstrip(".").lower() == target_name
     ]
+    matches = [record for record in same_name if str(record.get("type", "")).upper() == dns.record_type]
+
+    for record in same_name:
+        if str(record.get("type", "")).upper() == dns.record_type:
+            continue
+        record_id = record.get("id")
+        if not isinstance(record_id, str) or not record_id:
+            print_error(f"  同名冲突 DNS 记录缺少 ID，无法删除：{dns.name}")
+            return False
+        print_info(f"  正在删除同名旧类型 DNS 记录 '{record.get('type')} {dns.name}' ...")
+        result = api.delete_dns_record(dns.zone_id, record_id)
+        if not result or not result.get("success"):
+            print_error(f"  删除同名旧类型 DNS 记录失败：{dns.name}")
+            return False
+
     if len(matches) > 1:
-        print_error(f"  找到多条同名同类型 DNS 记录，无法安全修改：{dns.name}")
-        return False
+        keep = matches[0]
+        for duplicate in matches[1:]:
+            record_id = duplicate.get("id")
+            if not isinstance(record_id, str) or not record_id:
+                print_error(f"  重复 DNS 记录缺少 ID，无法删除：{dns.name}")
+                return False
+            result = api.delete_dns_record(dns.zone_id, record_id)
+            if not result or not result.get("success"):
+                print_error(f"  删除重复 DNS 记录失败：{dns.name}")
+                return False
+        matches = [keep]
 
     payload = {
         "type": dns.record_type,
@@ -277,6 +318,9 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
     if result and result.get("success"):
         print_ok("  项目已创建")
     else:
+        if api.get_project(project) is None:
+            print_error("  创建或查询 Pages 项目失败")
+            return False
         print_ok("  项目已存在，跳过创建")
 
     # ========== 第二步：上传部署 ==========
@@ -289,9 +333,12 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
     # ========== 第三步：配置项目 ==========
     print_info(f"  [3/4] 配置项目 ...")
 
-    # KV 命名空间：先创建，失败则查询获取 ID
+    # KV 命名空间：仅在启用绑定时创建或查询
     ns_id = None
-    if account.pages.kv_namespace:
+    if account.pages.kv_create or account.pages.kv_binding:
+        if not account.pages.kv_namespace:
+            print_error("  KV 绑定已启用，但未配置 kv_namespace")
+            return False
         result = api.create_kv_namespace(account.pages.kv_namespace)
         if result and result.get("success"):
             ns_id = result["result"].get("id")
@@ -302,9 +349,14 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
                     ns_id = ns.get("id")
                     print_ok(f"  KV 命名空间 '{account.pages.kv_namespace}' 已存在")
                     break
+        if not ns_id:
+            print_error(f"  无法获取 KV 命名空间 ID：{account.pages.kv_namespace}")
+            return False
 
     # 设置环境变量 + KV 绑定
-    set_project_config(api, account, ns_id)
+    if not set_project_config(api, account, ns_id):
+        print_error("  环境变量或 KV 绑定配置失败")
+        return False
 
     # 自定义域名
     if account.pages.domain and not sync_project_domain(api, project, account.pages.domain):
@@ -317,14 +369,15 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
         return False
     print_ok(f"  ✅ 项目 '{project}' 已完全部署并配置完成")
 
-    # DNS 是部署后的独立操作，失败不影响项目部署结果
+    # DNS 在项目部署后执行，但仍属于该账号的声明配置
     try:
         dns_synced = sync_dns_record(api, account)
     except Exception as exc:
-        print_warn(f"  DNS 同步异常，但项目 '{project}' 已部署成功：{exc}")
-        dns_synced = True
+        print_error(f"  DNS 同步异常：{exc}")
+        dns_synced = False
     if not dns_synced:
-        print_warn(f"  DNS 同步失败，但项目 '{project}' 已部署成功")
+        print_error(f"  DNS 同步失败，账号 '{account.name}' 配置未完全收敛")
+        return False
     return True
 
 
@@ -352,7 +405,7 @@ def deploy_workflow(cfg: Config):
     print_info("  2. 部署源码：wrangler pages deploy")
     print_info("  3. 配置项目：KV 命名空间 → 环境变量 + KV 绑定 → 自定义域名")
     print_info("  4. 重新部署使配置生效")
-    print_info("  5. 同步 DNS 记录（失败不影响项目部署）")
+    print_info("  5. 同步 DNS 记录（失败时当前账号标记失败）")
     print()
 
     print_info(">> 正在准备源码文件 ...")
@@ -363,11 +416,21 @@ def deploy_workflow(cfg: Config):
 
     source_dir = source_dir.resolve()
 
+    results: list[tuple[Account, bool]] = []
     for account in selected:
-        with CfApiClient(account.account_id, account.token) as api:
-            deploy_project(api, account, source_dir)
+        try:
+            with CfApiClient(account.account_id, account.token) as api:
+                success = deploy_project(api, account, source_dir)
+        except Exception as exc:
+            print_error(f"账号 '{account.name}' 执行异常：{exc}")
+            success = False
+        results.append((account, success))
 
+    failed = [account for account, success in results if not success]
     print_ok("========== 部署完成 ==========")
+    print_info(f"成功：{len(results) - len(failed)}，失败：{len(failed)}")
+    for account in failed:
+        print_error(f"  失败账号：{account.name}")
     wait_enter()
 
 
