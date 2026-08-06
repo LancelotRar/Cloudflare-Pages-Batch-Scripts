@@ -100,6 +100,41 @@ def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = N
     return api.patch_project_config(account.pages.project_name, dep_cfg)
 
 
+def sync_project_domain(api: CfApiClient, project: str, target_domain: str) -> bool:
+    """Replace all existing custom domains with the configured target domain."""
+    domains = api.list_domains(project)
+    if domains is None:
+        print_error("  查询项目现有域名失败")
+        return False
+
+    existing_names: list[str] = []
+    for domain in domains:
+        name = domain.get("name")
+        if isinstance(name, str) and name:
+            existing_names.append(name)
+    for domain in existing_names:
+        if domain == target_domain:
+            continue
+        print_info(f"  正在删除旧域名 '{domain}' ...")
+        result = api.delete_domain(project, domain)
+        if not result or not result.get("success"):
+            print_error(f"  删除旧域名失败：{domain}")
+            return False
+        print_ok(f"  旧域名已删除：{domain}")
+
+    if target_domain in existing_names:
+        print_ok(f"  域名已配置，跳过：{target_domain}")
+        return True
+
+    print_info(f"  正在添加域名 '{target_domain}' ...")
+    result = api.add_domain(project, target_domain)
+    if not result or not result.get("success"):
+        print_error(f"  添加域名失败：{target_domain}")
+        return False
+    print_ok(f"  域名已添加：{target_domain}")
+    return True
+
+
 def _find_wrangler() -> str | None:
     """Find wrangler CLI path via PATH resolution, with platform fallbacks."""
     wrangler_path = shutil.which("wrangler")
@@ -210,13 +245,8 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
     set_project_config(api, account, ns_id)
 
     # 自定义域名
-    if account.pages.domain:
-        print_info(f"  正在添加域名 '{account.pages.domain}' ...")
-        result = api.add_domain(project, account.pages.domain)
-        if result and result.get("success"):
-            print_ok(f"  域名已添加：{account.pages.domain}")
-        else:
-            print_ok(f"  域名已配置，跳过：{account.pages.domain}")
+    if account.pages.domain and not sync_project_domain(api, project, account.pages.domain):
+        return False
 
     # ========== 第四步：重新部署 ==========
     print_info(f"  [4/4] 重新部署使配置生效 ...")

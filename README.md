@@ -24,7 +24,7 @@
 
 1. 通过 CF API 创建 Pages 项目（已存在则跳过）
 2. `wrangler pages deploy` 上传源码
-3. 配置项目：创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 添加自定义域名
+3. 配置项目：创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 同步自定义域名
 4. `wrangler pages deploy` 重新部署使配置生效
 
 ### 批量删除
@@ -219,7 +219,7 @@ accounts:
 | | `token` | Cloudflare API Token |
 | | `account_id` | Cloudflare 账户 ID |
 | `accounts[].pages` | `project_name` | Pages 项目名称 |
-| | `domain` | 自定义域名（为空则跳过） |
+| | `domain` | 目标自定义域名；部署时删除项目中其他自定义域名后添加该域名（为空则跳过） |
 | | `kv_create` | 是否自动创建 KV 命名空间 |
 | | `kv_namespace` | KV 命名空间标题 |
 | | `kv_binding` | 是否将 KV 绑定到项目 |
@@ -243,10 +243,12 @@ accounts:
 
 1. **创建项目** — 通过 CF API 创建 Pages 项目（已存在则跳过）
 2. **上传部署** — `wrangler pages deploy` 上传源码
-3. **配置项目** — 创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 添加自定义域名
+3. **配置项目** — 创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 同步自定义域名
 4. **重新部署** — 再次 `wrangler pages deploy` 使配置生效
 
 > 为什么需要重新部署？Cloudflare Pages 的项目配置（环境变量、KV 绑定、域名）在首次部署后设置，需要再次部署让配置生效。
+
+配置了 `domain` 时，脚本会先查询项目当前绑定的自定义域名，删除所有与目标域名不同的旧域名，再添加目标域名。目标域名已经存在时不会重复添加；查询、删除或添加失败时会停止该账号的部署，避免继续执行最终重部署。
 
 ### 批量删除
 

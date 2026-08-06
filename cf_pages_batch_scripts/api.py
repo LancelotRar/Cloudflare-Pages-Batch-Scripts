@@ -115,6 +115,12 @@ class CfApiClient:
             "name": domain,
         })
 
+    def list_domains(self, project_name: str) -> list[dict] | None:
+        data = self._request("GET", f"/pages/projects/{project_name}/domains")
+        if data and data.get("success"):
+            return data.get("result", [])
+        return None
+
     def delete_domain(self, project_name: str, domain: str) -> dict | None:
         return self._request("DELETE", f"/pages/projects/{project_name}/domains/{domain}")
 
