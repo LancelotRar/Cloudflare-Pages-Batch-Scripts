@@ -67,7 +67,7 @@ wrangler --version
 
 ```powershell
 # 1. 克隆仓库
-git clone https://github.com/<your-username>/Cloudflare-Pages-Batch-Scripts.git cf_pages_batch_scripts
+git clone https://github.com/LancelotRar/Cloudflare-Pages-Batch-Scripts.git cf_pages_batch_scripts
 cd cf_pages_batch_scripts
 
 # 2. 创建并激活虚拟环境
