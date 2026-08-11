@@ -159,32 +159,17 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
     if not dns.zone_id or not dns.name or not dns.content:
         return True
 
-    print_info(f"  正在查询 DNS 记录 '{dns.name}' ...")
+    print_info(f"  正在按内容查询 DNS 记录 '{dns.content}' ...")
     records = api.list_dns_records(dns.zone_id)
     if records is None:
         print_error("  查询 DNS 记录失败")
         return False
 
-    target_name = dns.name.rstrip(".").lower()
-    same_name = [
+    matches = [
         record
         for record in records
-        if str(record.get("name", "")).rstrip(".").lower() == target_name
+        if record.get("content") == dns.content
     ]
-    matches = [record for record in same_name if str(record.get("type", "")).upper() == dns.record_type]
-
-    for record in same_name:
-        if str(record.get("type", "")).upper() == dns.record_type:
-            continue
-        record_id = record.get("id")
-        if not isinstance(record_id, str) or not record_id:
-            print_error(f"  同名冲突 DNS 记录缺少 ID，无法删除：{dns.name}")
-            return False
-        print_info(f"  正在删除同名旧类型 DNS 记录 '{record.get('type')} {dns.name}' ...")
-        result = api.delete_dns_record(dns.zone_id, record_id)
-        if not result or not result.get("success"):
-            print_error(f"  删除同名旧类型 DNS 记录失败：{dns.name}")
-            return False
 
     if len(matches) > 1:
         keep = matches[0]
@@ -217,7 +202,8 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
 
     current = matches[0]
     is_current = (
-        str(current.get("content", "")).rstrip(".").lower() == dns.content.rstrip(".").lower()
+        str(current.get("name", "")).rstrip(".").lower() == dns.name.rstrip(".").lower()
+        and str(current.get("type", "")).upper() == dns.record_type
         and current.get("proxied", False) is dns.proxied
         and current.get("ttl") == dns.ttl
     )
