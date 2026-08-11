@@ -14,7 +14,7 @@
 多账号 Cloudflare Pages 批量部署/删除工具。从 ZIP 下载源码 → 创建 Pages 项目 → wrangler 上传 → 配置环境变量 + KV 绑定 + 自定义域名 → 重新部署 → 同步 DNS 记录，全流程自动化。
 
 > [!TIP]  
-> 可搭配 [edgetunnel项目](https://github.com/cmliu/edgetunnel) 实现快速批量部署、批量重建多Cloudflare账号下的Pages项目，实现请求数叠加，达到负载均衡效果，请求数限制突破单账户10w；并通过重建自定义域实现断流管控。[请求数叠加教程。](https://blog.cmliussss.com/p/edt2)
+> 可搭配 [edgetunnel项目](https://github.com/cmliu/edgetunnel) 实现快速批量部署、批量重建多Cloudflare账号下的Pages项目，实现请求数叠加，达到负载均衡效果，请求数限制突破单账户10w；并通过重建自定义域实现断流管控。[请求数叠加教程](https://blog.cmliussss.com/p/edt2)。
 
 ## 功能
 
