@@ -7,21 +7,12 @@ build/
 .venv/
 .pytest_cache/
 tests/
-
-# Ruff
 .ruff_cache/
-
-# MyPy
 .mypy_cache/
-
-# opencode workspace
-.omo/
-AGENTS.md
 
 # Project specific
 .wrangler/
 files-to-redeploy/
-.codegraph/
 /config.yaml
 
 # OS
