@@ -151,7 +151,7 @@ class CfApiClient:
         results: list[dict] = []
         page = 1
         while True:
-            query = urlencode({"page": page, "per_page": 100, "content": content})
+            query = urlencode({"page": page, "per_page": 100, "content.exact": content})
             url = f"{CF_API_BASE}/zones/{zone_id}/dns_records?{query}"
             data = self._request_url("GET", url)
             if not data or not data.get("success"):

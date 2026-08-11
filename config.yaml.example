@@ -1,7 +1,7 @@
 Myenv: &Myenv [{name: UUID, type: plain_text, value: 550e8400-e28b-41d4-a716-446655440000}, {name: ADMIN, type: plain_text, value: your-password}]
 Mypageskvyes: &Mypageskvyes {kv_create: true, kv_binding: true, kv_binding_env: KV, project_type: production}
 Mypageskvno: &Mypageskvno {kv_create: false, kv_binding: false, project_type: production}
-MyDNS: &MyDNS {zone_id: 00000000000000000000000000000000, type: CNAME, proxied: false, ttl: auto}
+MyDNS: &MyDNS {dns_token: cfat_0000000000000000000000000000000000000000, zone_id: 00000000000000000000000000000000, type: CNAME, proxied: false, ttl: auto}
 
 files_to_redeploy:
   dir: files-to-redeploy

@@ -68,6 +68,7 @@ def _parse_dns_config(raw_dns: dict) -> DnsConfig:
     raw_ttl = raw_dns.get("ttl", 1)
     ttl = 1 if str(raw_ttl).lower() == "auto" else int(raw_ttl)
     return DnsConfig(
+        token=_get_str(raw_dns, "dns_token"),
         zone_id=_get_str(raw_dns, "zone_id"),
         record_type=_get_str(raw_dns, "type", "CNAME").upper(),
         name=_get_str(raw_dns, "name"),

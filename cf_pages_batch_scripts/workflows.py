@@ -358,7 +358,15 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
 
     # DNS 在项目部署后执行，但仍属于该账号的声明配置
     try:
-        dns_synced = sync_dns_record(api, account)
+        dns_configured = bool(account.dns.zone_id and account.dns.name and account.dns.content)
+        if not dns_configured:
+            dns_synced = True
+        elif not account.dns.token:
+            print_error("  DNS 配置缺少独立的 dns_token")
+            dns_synced = False
+        else:
+            with CfApiClient(account.account_id, account.dns.token) as dns_api:
+                dns_synced = sync_dns_record(dns_api, account)
     except Exception as exc:
         print_error(f"  DNS 同步异常：{exc}")
         dns_synced = False

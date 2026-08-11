@@ -159,7 +159,7 @@ cf_pages_batch_scripts -c /path/to/config.yaml
 Myenv: &Myenv [{name: UUID, type: plain_text, value: 550e8400-e28b-41d4-a716-446655440000}, {name: ADMIN, type: plain_text, value: your-password}]
 Mypageskvyes: &Mypageskvyes {kv_create: true, kv_binding: true, kv_binding_env: KV, project_type: production}
 Mypageskvno: &Mypageskvno {kv_create: false, kv_binding: false, project_type: production}
-MyDNS: &MyDNS {zone_id: 00000000000000000000000000000000, type: CNAME, proxied: false, ttl: auto}
+MyDNS: &MyDNS {dns_token: cfat_0000000000000000000000000000000000000000, zone_id: 00000000000000000000000000000000, type: CNAME, proxied: false, ttl: auto}
 
 files_to_redeploy:
   dir: files-to-redeploy
@@ -247,6 +247,7 @@ accounts:
 | | `type` | `plain_text` 或 `secret_text` |
 | | `value` | 环境变量值 |
 | `accounts[].dns` | `zone_id` | DNS Zone ID |
+| | `dns_token` | 必填的 DNS 专用 API Token，需对目标 Zone 具有 `DNS Write` 权限；不会使用账号 `token` |
 | | `type` | DNS 记录类型，默认 `CNAME` |
 | | `name` | 完整 DNS 记录名称 |
 | | `content` | DNS 记录目标值 |
@@ -277,7 +278,7 @@ accounts:
 
 非空 `pages.env` 是受管理环境的完整白名单，脚本会添加或修改目标变量，并删除未声明的多余变量。KV 字段存在时会严格收敛绑定：`kv_binding: true` 只保留目标绑定，`kv_binding: false` 删除现有 KV 绑定。环境变量为空、KV 字段完全缺省或 `domain` 为空时，对应配置不进行任何操作。
 
-配置完整的 `dns` 时，脚本会在 Pages 项目完成最终重部署后，通过 Cloudflare API 的 `content` 查询参数精确匹配 DNS 记录。找到记录后会将其名称、类型、代理状态和 TTL 修改为声明配置；记录不存在时创建，重复内容的记录会收敛为一条。DNS 查询、创建或修改失败会显示 Cloudflare API 错误详情并使当前账号失败，但不会影响后续账号继续部署。
+配置完整的 `dns` 时，脚本会在 Pages 项目完成最终重部署后，通过 Cloudflare API 的 `content.exact` 查询参数精确匹配 DNS 记录。找到记录后会将其名称、类型、代理状态和 TTL 修改为声明配置；记录不存在时创建，重复内容的记录会收敛为一条。DNS 查询、创建或修改失败会显示 Cloudflare API 错误详情并使当前账号失败，但不会影响后续账号继续部署。
 
 ### 批量删除
 

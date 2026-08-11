@@ -26,6 +26,7 @@ class PagesConfig:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DnsConfig:
     """单个 DNS 记录配置。"""
+    token: str = field(default="", repr=False)
     zone_id: str = ""
     record_type: str = "CNAME"
     name: str = ""
