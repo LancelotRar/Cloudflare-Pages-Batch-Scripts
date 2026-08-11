@@ -1,5 +1,5 @@
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -12,6 +12,7 @@ class CfApiClient:
     def __init__(self, account_id: str, token: str, timeout: int = 30):
         self.account_id = account_id
         self.token = token
+        self.last_error: str | None = None
         self._client = httpx.Client(
             headers={
                 "Authorization": f"Bearer {token}",
@@ -33,6 +34,7 @@ class CfApiClient:
     def _request_url(self, method: str, url: str, body: dict | None = None) -> dict | None:
         """Make a request to an absolute Cloudflare API URL with retry logic."""
         backoff = [2, 4, 8]
+        self.last_error = None
 
         for attempt in range(3):
             try:
@@ -44,14 +46,16 @@ class CfApiClient:
                     if is_transient and attempt < 2:
                         time.sleep(backoff[attempt])
                         continue
+                    self.last_error = self._format_api_errors(resp.status_code, data)
                     return data
 
                 return data
 
-            except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError):
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
                 if attempt < 2:
                     time.sleep(backoff[attempt])
                     continue
+                self.last_error = f"Cloudflare API 网络请求失败：{exc}"
                 return None
 
         return None
@@ -61,6 +65,16 @@ class CfApiClient:
         """Safely append a query parameter to a path, preserving any existing params."""
         sep = "&" if "?" in path else "?"
         return f"{path}{sep}{param}={value}"
+
+    @staticmethod
+    def _format_api_errors(status_code: int, data: dict) -> str:
+        errors = data.get("errors", [])
+        details = "; ".join(
+            f"[{error.get('code')}]: {error.get('message')}"
+            for error in errors
+            if isinstance(error, dict)
+        )
+        return f"Cloudflare API {status_code} {details}".rstrip()
 
     def _paginated_get(self, path: str) -> list[dict]:
         """Fetch all pages of a paginated GET endpoint."""
@@ -133,13 +147,16 @@ class CfApiClient:
         domain_path = quote(domain, safe="")
         return self._request("DELETE", f"/pages/projects/{project_path}/domains/{domain_path}")
 
-    def list_dns_records(self, zone_id: str) -> list[dict] | None:
+    def list_dns_records(self, zone_id: str, content: str) -> list[dict] | None:
         results: list[dict] = []
         page = 1
         while True:
-            url = f"{CF_API_BASE}/zones/{zone_id}/dns_records?page={page}&per_page=100"
+            query = urlencode({"page": page, "per_page": 100, "content": content})
+            url = f"{CF_API_BASE}/zones/{zone_id}/dns_records?{query}"
             data = self._request_url("GET", url)
             if not data or not data.get("success"):
+                if data and not self.last_error:
+                    self.last_error = self._format_api_errors(200, data)
                 return None
             results.extend(data.get("result", []))
             total_pages = data.get("result_info", {}).get("total_pages", 1)

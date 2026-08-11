@@ -160,9 +160,10 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
         return True
 
     print_info(f"  正在按内容查询 DNS 记录 '{dns.content}' ...")
-    records = api.list_dns_records(dns.zone_id)
+    records = api.list_dns_records(dns.zone_id, dns.content)
     if records is None:
-        print_error("  查询 DNS 记录失败")
+        error = api.last_error
+        print_error(f"  查询 DNS 记录失败：{error}" if error else "  查询 DNS 记录失败")
         return False
 
     matches = [
