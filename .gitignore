@@ -18,3 +18,4 @@ files-to-redeploy/
 # OS
 .DS_Store
 Thumbs.db
+.omo
