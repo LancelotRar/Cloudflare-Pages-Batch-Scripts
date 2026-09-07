@@ -66,7 +66,13 @@ def _parse_pages_config(raw_pages: dict) -> PagesConfig:
 def _parse_dns_config(raw_dns: dict) -> DnsConfig:
     """从原始 YAML dict 解析 DnsConfig。"""
     raw_ttl = raw_dns.get("ttl", 1)
-    ttl = 1 if str(raw_ttl).lower() == "auto" else int(raw_ttl)
+    if str(raw_ttl).lower() == "auto":
+        ttl = 1
+    else:
+        try:
+            ttl = int(raw_ttl)
+        except (TypeError, ValueError):
+            raise ValueError(f"dns.ttl 配置无效：{raw_ttl!r}（应为 'auto' 或正整数秒）") from None
     return DnsConfig(
         token=_get_str(raw_dns, "dns_token"),
         zone_id=_get_str(raw_dns, "zone_id"),
@@ -98,7 +104,7 @@ def load_config(path: Path | None = None) -> Config:
     if path is None:
         path = find_config()
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
     return Config(

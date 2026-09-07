@@ -8,7 +8,7 @@ import httpx
 
 from .api import CfApiClient
 from .config import get_enabled_accounts
-from .models import Config, Account
+from .models import Account, Config
 from .ui import (
     print_error,
     print_header,
@@ -21,7 +21,11 @@ from .ui import (
 
 
 def prepare_source(cfg: Config) -> Path | None:
-    """Download and extract source code from files_to_redeploy URL."""
+    """Download and extract source code from files_to_redeploy URL.
+
+    下载与解压先进入同级临时目录，全部成功后才原子交换到目标目录；
+    下载失败不会破坏上一次的可用源码。
+    """
     fr = cfg.files_to_redeploy
     deploy_dir = Path(fr.dir)
     if not deploy_dir.is_absolute():
@@ -33,22 +37,23 @@ def prepare_source(cfg: Config) -> Path | None:
         return None
 
     print_info(f"正在从 {fr.download_url} 下载最新源码 ...")
-    if deploy_dir.exists():
-        shutil.rmtree(deploy_dir)
-    deploy_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = deploy_dir.parent / f".{deploy_dir.name}.download.tmp"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True)
 
     try:
         resp = httpx.get(fr.download_url, timeout=300, follow_redirects=True)
         resp.raise_for_status()
 
-        zip_path = deploy_dir / "source.zip"
+        zip_path = tmp_dir / "source.zip"
         zip_path.write_bytes(resp.content)
 
         # 基本完整性检查：ZIP 至少应有几百字节
         if zip_path.stat().st_size < 200:
             raise ValueError(f"下载文件过小 ({zip_path.stat().st_size} bytes)，可能不是有效的 ZIP")
 
-        extracted = deploy_dir / "extracted"
+        extracted = tmp_dir / "extracted"
         extracted.mkdir(exist_ok=True)
 
         with zipfile.ZipFile(zip_path) as zf:
@@ -56,16 +61,20 @@ def prepare_source(cfg: Config) -> Path | None:
 
         # Find source directory: use single top-level dir if exists, otherwise root
         dirs = [d for d in extracted.iterdir() if d.is_dir()]
-        if len(dirs) == 1:
-            src = dirs[0]
-        else:
-            src = extracted
-
-        print_ok(f"源码已就绪：{src}")
-        return src
+        src = dirs[0] if len(dirs) == 1 else extracted
     except Exception as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         print_error(f"下载/解压失败：{e}")
         return None
+
+    # 原子交换：一切成功后才替换旧目录
+    if deploy_dir.exists():
+        shutil.rmtree(deploy_dir)
+    shutil.move(str(tmp_dir), str(deploy_dir))
+
+    src = deploy_dir / src.relative_to(tmp_dir)
+    print_ok(f"源码已就绪：{src}")
+    return src
 
 
 def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = None) -> bool:
@@ -80,7 +89,8 @@ def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = N
         print_error("  查询 Pages 项目配置失败")
         return False
 
-    target_envs = [account.pages.project_type] if account.pages.project_type in {"production", "preview"} else ["production", "preview"]
+    env_key = account.pages.project_type
+    target_envs = [env_key] if env_key in {"production", "preview"} else ["production", "preview"]
     current_configs = project.get("deployment_configs", {})
     dep_cfg: dict[str, dict] = {}
     managed_env_names = {ev.name for ev in account.pages.env if ev.name}
@@ -126,19 +136,19 @@ def sync_project_domain(api: CfApiClient, project: str, target_domain: str) -> b
         return False
 
     existing_names: list[str] = []
-    for domain in domains:
-        name = domain.get("name")
+    for entry in domains:
+        name = entry.get("name")
         if isinstance(name, str) and name:
             existing_names.append(name)
-    for domain in existing_names:
-        if domain == target_domain:
+    for existing in existing_names:
+        if existing == target_domain:
             continue
-        print_info(f"  正在删除旧域名 '{domain}' ...")
-        result = api.delete_domain(project, domain)
+        print_info(f"  正在删除旧域名 '{existing}' ...")
+        result = api.delete_domain(project, existing)
         if not result or not result.get("success"):
-            print_error(f"  删除旧域名失败：{domain}")
+            print_error(f"  删除旧域名失败：{existing}")
             return False
-        print_ok(f"  旧域名已删除：{domain}")
+        print_ok(f"  旧域名已删除：{existing}")
 
     if target_domain in existing_names:
         print_ok(f"  域名已配置，跳过：{target_domain}")
@@ -311,33 +321,32 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
         print_ok("  项目已存在，跳过创建")
 
     # ========== 第二步：上传部署 ==========
-    print_info(f"  [2/4] 上传部署 ...")
+    print_info("  [2/4] 上传部署 ...")
     if not _run_wrangler(source_dir, project, account.token, account.account_id, "上传部署"):
         print_error("  上传部署失败")
         return False
     print_ok("  上传部署完成")
 
     # ========== 第三步：配置项目 ==========
-    print_info(f"  [3/4] 配置项目 ...")
+    print_info("  [3/4] 配置项目 ...")
 
-    # KV 命名空间：仅在启用绑定时创建或查询
-    ns_id = None
+    # KV 命名空间：查询优先、缺失时创建（幂等）；仅启用绑定时只查询不创建
+    ns_id: str | None = None
     if account.pages.kv_create or account.pages.kv_binding:
         if not account.pages.kv_namespace:
             print_error("  KV 绑定已启用，但未配置 kv_namespace")
             return False
-        result = api.create_kv_namespace(account.pages.kv_namespace)
-        if result and result.get("success"):
-            ns_id = result["result"].get("id")
-            print_ok(f"  KV 命名空间 '{account.pages.kv_namespace}' 已创建")
+        if account.pages.kv_create:
+            ns_id = api.ensure_kv_namespace(account.pages.kv_namespace)
         else:
-            for ns in api.list_kv_namespaces():
-                if ns.get("title") == account.pages.kv_namespace:
-                    ns_id = ns.get("id")
-                    print_ok(f"  KV 命名空间 '{account.pages.kv_namespace}' 已存在")
-                    break
+            ns_id = next(
+                (ns.get("id") for ns in api.list_kv_namespaces() if ns.get("title") == account.pages.kv_namespace),
+                None,
+            )
         if not ns_id:
-            print_error(f"  无法获取 KV 命名空间 ID：{account.pages.kv_namespace}")
+            print_error(
+                f"  无法获取 KV 命名空间 ID：{account.pages.kv_namespace}（{api.last_error or '未知原因'}）"
+            )
             return False
 
     # 设置环境变量 + KV 绑定
@@ -350,7 +359,7 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
         return False
 
     # ========== 第四步：重新部署 ==========
-    print_info(f"  [4/4] 重新部署使配置生效 ...")
+    print_info("  [4/4] 重新部署使配置生效 ...")
     if not _run_wrangler(source_dir, project, account.token, account.account_id, "重新部署"):
         print_error("  重新部署失败")
         return False
@@ -376,7 +385,7 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
     return True
 
 
-def deploy_workflow(cfg: Config):
+def deploy_workflow(cfg: Config) -> None:
     """完整部署流程入口"""
     accounts = get_enabled_accounts(cfg)
     if not accounts:
@@ -429,45 +438,7 @@ def deploy_workflow(cfg: Config):
     wait_enter()
 
 
-def parse_selection(sel: str, items: list[dict]) -> list[dict]:
-    """解析用户选择字符串，返回去重后的条目列表。"""
-    selected = []
-    sel_lower = sel.strip().lower()
-
-    if sel_lower == "a":
-        return list(items)
-
-    parts = [p.strip() for p in sel.split(",")]
-    for part in parts:
-        if not part:
-            continue
-        if "-" in part:
-            try:
-                start_str, end_str = part.split("-", 1)
-                start, end = int(start_str.strip()), int(end_str.strip())
-                lo, hi = (start, end) if start <= end else (end, start)
-                selected.extend(
-                    [item for item in items if lo <= item["index"] <= hi]
-                )
-            except (ValueError, IndexError):
-                continue
-        else:
-            try:
-                n = int(part)
-                selected.extend([item for item in items if item["index"] == n])
-            except ValueError:
-                continue
-
-    seen = set()
-    unique = []
-    for item in selected:
-        if item["index"] not in seen:
-            seen.add(item["index"])
-            unique.append(item)
-    return unique
-
-
-def delete_workflow(cfg: Config):
+def delete_workflow(cfg: Config) -> None:
     """完整删除流程入口"""
     accounts = get_enabled_accounts(cfg)
     if not accounts:

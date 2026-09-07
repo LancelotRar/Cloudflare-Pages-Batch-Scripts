@@ -1,4 +1,5 @@
 import time
+from types import TracebackType
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -25,7 +26,7 @@ class CfApiClient:
         """Make an API request with retry logic.
 
         Retries on transient errors (5xx, 429, network timeouts/errors)
-        up to 3 attempts with 2/4/8s backoff.
+        up to 3 attempts with 2/4s backoff.
         4xx errors and programming errors are NOT retried and are returned / raised.
         """
         url = f"{CF_API_BASE}/accounts/{self.account_id}{path}"
@@ -33,13 +34,13 @@ class CfApiClient:
 
     def _request_url(self, method: str, url: str, body: dict | None = None) -> dict | None:
         """Make a request to an absolute Cloudflare API URL with retry logic."""
-        backoff = [2, 4, 8]
+        backoff = [2, 4]
         self.last_error = None
 
         for attempt in range(3):
             try:
                 resp = self._client.request(method, url, json=body)
-                data = resp.json()
+                data: dict = resp.json()
 
                 if resp.status_code >= 400:
                     is_transient = resp.status_code >= 500 or resp.status_code == 429
@@ -64,7 +65,7 @@ class CfApiClient:
     def _add_query_param(path: str, param: str, value: object) -> str:
         """Safely append a query parameter to a path, preserving any existing params."""
         sep = "&" if "?" in path else "?"
-        return f"{path}{sep}{param}={value}"
+        return f"{path}{sep}{param}={quote(str(value))}"
 
     @staticmethod
     def _format_api_errors(status_code: int, data: dict) -> str:
@@ -93,16 +94,11 @@ class CfApiClient:
             page += 1
         return results
 
-    def list_projects(self) -> list[dict]:
-        data = self._request("GET", "/pages/projects")
-        if data and data.get("success"):
-            return data.get("result", [])
-        return []
-
     def get_project(self, name: str) -> dict | None:
         data = self._request("GET", f"/pages/projects/{quote(name, safe='')}")
         if data and data.get("success"):
-            return data["result"]
+            result: dict = data["result"]
+            return result
         return None
 
     def create_project(self, name: str, branch: str = "main") -> dict | None:
@@ -120,15 +116,6 @@ class CfApiClient:
         })
         return data is not None and data.get("success", False)
 
-    def list_deployments(self, project_name: str) -> list[dict]:
-        data = self._request("GET", f"/pages/projects/{project_name}/deployments")
-        if data and data.get("success"):
-            return data.get("result", [])
-        return []
-
-    def delete_deployment(self, project_name: str, deployment_id: str) -> dict | None:
-        return self._request("DELETE", f"/pages/projects/{project_name}/deployments/{deployment_id}")
-
     def add_domain(self, project_name: str, domain: str) -> dict | None:
         project_path = quote(project_name, safe="")
         return self._request("POST", f"/pages/projects/{project_path}/domains", {
@@ -139,7 +126,8 @@ class CfApiClient:
         project_path = quote(project_name, safe="")
         data = self._request("GET", f"/pages/projects/{project_path}/domains")
         if data and data.get("success"):
-            return data.get("result", [])
+            result: list[dict] = data.get("result", [])
+            return result
         return None
 
     def delete_domain(self, project_name: str, domain: str) -> dict | None:
@@ -197,14 +185,21 @@ class CfApiClient:
                 return ns.get("id")
         result = self.create_kv_namespace(title)
         if result and result.get("success"):
-            return result["result"].get("id")
+            created: dict = result["result"]
+            ns_id: str | None = created.get("id")
+            return ns_id
         return None
 
-    def __enter__(self):
+    def __enter__(self) -> "CfApiClient":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()
 
-    def close(self):
+    def close(self) -> None:
         self._client.close()

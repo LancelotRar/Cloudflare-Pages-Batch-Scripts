@@ -1,9 +1,10 @@
 import argparse
+import traceback
 from pathlib import Path
 
 from .config import load_config
 from .ui import main_menu, print_error, wait_enter
-from .workflows import deploy_workflow, delete_workflow
+from .workflows import delete_workflow, deploy_workflow
 
 
 def _parse_args() -> argparse.Namespace:
@@ -12,7 +13,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     """入口函数：加载配置，循环显示菜单直到用户退出。"""
     args = _parse_args()
     try:
@@ -35,7 +36,6 @@ def main():
             break
         except Exception as e:
             print_error(f"发生错误：{e}")
-            import traceback
             traceback.print_exc()
             wait_enter()
 
