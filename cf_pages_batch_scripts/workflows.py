@@ -80,7 +80,7 @@ def prepare_source(cfg: Config) -> Path | None:
 def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = None) -> bool:
     """Converge managed environment variables and KV bindings."""
     manage_env = bool(account.pages.env)
-    manage_kv = account.pages.kv_configured
+    manage_kv = account.pages.kv_create
     if not manage_env and not manage_kv:
         return True
 
@@ -110,15 +110,13 @@ def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = N
                 **desired_env_vars,
             }
         if manage_kv:
+            if not ns_id or not account.pages.kv_binding_env:
+                print_error("  KV 已启用，但命名空间 ID 或绑定名无效")
+                return False
             current_kv = current.get("kv_namespaces", {})
-            desired_kv = {}
-            if account.pages.kv_binding:
-                if not ns_id or not account.pages.kv_binding_env:
-                    print_error("  KV 绑定已启用，但命名空间 ID 或绑定名无效")
-                    return False
-                desired_kv = {
-                    account.pages.kv_binding_env: {"namespace_id": ns_id}
-                }
+            desired_kv = {
+                account.pages.kv_binding_env: {"namespace_id": ns_id}
+            }
             cfg["kv_namespaces"] = {
                 **{name: None for name in current_kv if name not in desired_kv},
                 **desired_kv,
@@ -330,24 +328,23 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
     # ========== 第三步：配置项目 ==========
     print_info("  [3/4] 配置项目 ...")
 
-    # KV 命名空间：查询优先、缺失时创建（幂等）；仅启用绑定时只查询不创建
+    # KV 总开关：kv_create=false 时不进行任何 KV 操作；
+    # true 时要求绑定配置完整，命名空间查询优先、缺失时创建（幂等）
     ns_id: str | None = None
-    if account.pages.kv_create or account.pages.kv_binding:
+    if account.pages.kv_create:
         if not account.pages.kv_namespace:
-            print_error("  KV 绑定已启用，但未配置 kv_namespace")
+            print_error("  KV 已启用，但未配置 kv_namespace")
             return False
-        if account.pages.kv_create:
-            ns_id = api.ensure_kv_namespace(account.pages.kv_namespace)
-        else:
-            ns_id = next(
-                (ns.get("id") for ns in api.list_kv_namespaces() if ns.get("title") == account.pages.kv_namespace),
-                None,
-            )
+        if not account.pages.kv_binding or not account.pages.kv_binding_env:
+            print_error("  KV 已启用，但未配置 kv_binding / kv_binding_env")
+            return False
+        ns_id, ns_created = api.ensure_kv_namespace(account.pages.kv_namespace)
         if not ns_id:
             print_error(
                 f"  无法获取 KV 命名空间 ID：{account.pages.kv_namespace}（{api.last_error or '未知原因'}）"
             )
             return False
+        print_ok(f"  KV 命名空间 '{account.pages.kv_namespace}' {'已创建' if ns_created else '已存在'}")
 
     # 设置环境变量 + KV 绑定
     if not set_project_config(api, account, ns_id):
@@ -475,8 +472,8 @@ def delete_workflow(cfg: Config) -> None:
             else:
                 print_warn(f"  项目 '{proj_name}' 不存在或删除失败")
 
-            # 按配置删除 KV 命名空间（需查 ID，唯一一次 CF 查询）
-            kv_name = account.pages.kv_namespace
+            # 按配置删除 KV 命名空间（受 kv_create 总开关门控；需查 ID，唯一一次 CF 查询）
+            kv_name = account.pages.kv_namespace if account.pages.kv_create else ""
             if kv_name:
                 for ns in api.list_kv_namespaces():
                     if ns.get("title") == kv_name:

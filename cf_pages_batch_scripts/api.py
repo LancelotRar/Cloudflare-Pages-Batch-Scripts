@@ -175,20 +175,24 @@ class CfApiClient:
     def delete_kv_namespace(self, namespace_id: str) -> dict | None:
         return self._request("DELETE", f"/storage/kv/namespaces/{namespace_id}")
 
-    def ensure_kv_namespace(self, title: str) -> str | None:
-        """Find KV namespace by title, or create if not exists. Returns namespace ID."""
+    def ensure_kv_namespace(self, title: str) -> tuple[str | None, bool]:
+        """Find KV namespace by title, or create if not exists.
+
+        返回 (namespace_id, created)，created 表示本次是否新建；失败返回 (None, False)。
+        """
         if not title:
-            return None
+            return None, False
         namespaces = self.list_kv_namespaces()
         for ns in namespaces:
             if ns.get("title") == title:
-                return ns.get("id")
+                ns_id: str | None = ns.get("id")
+                return ns_id, False
         result = self.create_kv_namespace(title)
         if result and result.get("success"):
             created: dict = result["result"]
-            ns_id: str | None = created.get("id")
-            return ns_id
-        return None
+            new_id: str | None = created.get("id")
+            return new_id, True
+        return None, False
 
     def __enter__(self) -> "CfApiClient":
         return self

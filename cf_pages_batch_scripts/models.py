@@ -18,7 +18,6 @@ class PagesConfig:
     kv_namespace: str = ""
     kv_binding: bool = False
     kv_binding_env: str = ""
-    kv_configured: bool = False
     project_type: str = "production"
     env: list[EnvVar] = field(default_factory=list)
 

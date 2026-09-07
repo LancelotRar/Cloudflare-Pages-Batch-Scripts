@@ -297,7 +297,7 @@ class TestApiMethods:
             json={"success": True, "result": {"id": "ns-new"}},
         )
         ns_id = client.ensure_kv_namespace("new-ns")
-        assert ns_id == "ns-new"
+        assert ns_id == ("ns-new", True)
 
     def test_ensure_kv_namespace_finds_existing(self, client: CfApiClient, httpx_mock: HTTPXMock):
         httpx_mock.add_response(
@@ -309,10 +309,10 @@ class TestApiMethods:
             },
         )
         ns_id = client.ensure_kv_namespace("my-ns")
-        assert ns_id == "ns-exist"
+        assert ns_id == ("ns-exist", False)
 
     def test_ensure_kv_namespace_empty_title(self, client: CfApiClient):
-        assert client.ensure_kv_namespace("") is None
+        assert client.ensure_kv_namespace("") == (None, False)
 
 
 class TestContextManager:

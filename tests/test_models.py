@@ -110,10 +110,10 @@ class TestAccount:
         assert dns.zone_id == "zone"
 
     def test_account_dns(self):
-        pc = PagesConfig(project_name="p")
-        dns = DnsConfig(zone_id="zone")
         ev = EnvVar(name="UUID", var_type="plain_text", value="abc")
-        acct = Account(name="a", enabled=True, token="t", account_id="aid", pages=PagesConfig(project_name="p", env=[ev]), dns=dns)
+        pc = PagesConfig(project_name="p", env=[ev])
+        dns = DnsConfig(zone_id="zone")
+        acct = Account(name="a", enabled=True, token="t", account_id="aid", pages=pc, dns=dns)
         assert acct.dns == dns
 
     def test_token_repr_hidden(self):

@@ -247,10 +247,10 @@ accounts:
 | | `account_id` | 当前 Pages 项目所在账户的 Account ID |
 | `accounts[].pages` | `project_name` | Pages 项目名称 |
 | | `domain` | 目标自定义域名；部署时删除项目中其他自定义域名后添加该域名（为空则跳过） |
-| | `kv_create` | 是否自动创建 KV 命名空间 |
-| | `kv_namespace` | KV 命名空间标题 |
-| | `kv_binding` | 是否将 KV 绑定到项目 |
-| | `kv_binding_env` | KV 绑定的环境变量名，不填则绑定名为空 |
+| | `kv_create` | **KV 操作总开关**：`false` 时不执行任何 KV 操作；`true` 时要求 `kv_namespace`、`kv_binding: true`、`kv_binding_env` 全部配置完整，否则该账号报错跳过 |
+| | `kv_namespace` | KV 命名空间标题（`kv_create: true` 时必填） |
+| | `kv_binding` | 是否将 KV 绑定到项目；`kv_create: true` 时必须为 `true` |
+| | `kv_binding_env` | KV 绑定的环境变量名（`kv_create: true` 时必填） |
 | | `project_type` | `production` 或 `preview` |
 | `accounts[].pages.env[]` | `name` | 环境变量名 |
 | | `type` | `plain_text` 或 `secret_text` |
@@ -285,7 +285,7 @@ accounts:
 
 配置了 `domain` 时，脚本会先查询项目当前绑定的自定义域名，删除所有与目标域名不同的旧域名，再添加目标域名。目标域名已经存在时不会重复添加；查询、删除或添加失败时会停止该账号的部署，避免继续执行最终重部署。
 
-非空 `pages.env` 是受管理环境的完整白名单，脚本会添加或修改目标变量，并删除未声明的多余变量。KV 字段存在时会严格收敛绑定：`kv_binding: true` 只保留目标绑定，`kv_binding: false` 删除现有 KV 绑定。环境变量为空、KV 字段完全缺省或 `domain` 为空时，对应配置不进行任何操作。
+非空 `pages.env` 是受管理环境的完整白名单，脚本会添加或修改目标变量，并删除未声明的多余变量。`kv_create` 是 KV 操作总开关：为 `false` 时完全不执行 KV 操作（不查询、不创建、不改绑定，删除流程同样跳过 KV）；为 `true` 时要求 `kv_namespace`、`kv_binding: true`、`kv_binding_env` 配置完整（缺失则该账号报错跳过），随后确保命名空间存在（查询优先、缺失才创建）并将项目 KV 绑定严格收敛为唯一目标绑定。环境变量为空或 `domain` 为空时，对应配置不进行任何操作。
 
 配置完整的 `dns` 时，脚本使用域名托管账户的 `dns_token` 和 `zone_id` 建立独立 DNS API 请求，不使用 Pages 项目账户的 `token` 或 `account_id`。随后通过 Cloudflare API 的 `content.exact` 查询参数精确匹配 DNS 记录。找到记录后会将其名称、类型、代理状态和 TTL 修改为声明配置；记录不存在时创建，重复内容的记录会收敛为一条。DNS 查询、创建或修改失败会显示 Cloudflare API 错误详情并使当前账号失败，但不会影响后续账号继续部署。
 
@@ -296,7 +296,7 @@ accounts:
 1. 选择要操作的账号
 2. 按 `config.yaml` 配置删除自定义域名
 3. 按配置删除 Pages 项目
-4. 按配置删除 KV 命名空间（需查询 ID）
+4. 按配置删除 KV 命名空间（仅当 `kv_create: true` 且配置了 `kv_namespace`；需查询 ID）
 
 > 删除流程以 `config.yaml` 为唯一来源，不查询 CF 上实际存在的项目列表。
 
