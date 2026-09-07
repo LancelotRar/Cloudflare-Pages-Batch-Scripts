@@ -13,6 +13,7 @@ build/
 .wrangler/
 files-to-redeploy/
 /config.yaml
+/UUID.txt
 
 # OS
 .DS_Store
