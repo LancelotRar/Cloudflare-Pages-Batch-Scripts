@@ -10,7 +10,7 @@ CF_API_BASE = "https://api.cloudflare.com/client/v4"
 class CfApiClient:
     """Cloudflare REST API client with retry logic."""
 
-    def __init__(self, account_id: str, token: str, timeout: int = 30):
+    def __init__(self, account_id: str, token: str, timeout: int = 30, proxy: str = ""):
         self.account_id = account_id
         self.token = token
         self.last_error: str | None = None
@@ -20,6 +20,7 @@ class CfApiClient:
                 "Content-Type": "application/json",
             },
             timeout=timeout,
+            proxy=proxy or None,
         )
 
     def _request(self, method: str, path: str, body: dict | None = None) -> dict | None:

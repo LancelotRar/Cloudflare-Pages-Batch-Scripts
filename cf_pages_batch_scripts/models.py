@@ -56,4 +56,5 @@ class FilesToRedeploy:
 class Config:
     """顶层配置文件"""
     files_to_redeploy: FilesToRedeploy = field(default_factory=FilesToRedeploy)
+    proxy: str = ""  # 可选代理，如 http://127.0.0.1:7890；为空时信任环境变量代理
     accounts: list[Account] = field(default_factory=list)

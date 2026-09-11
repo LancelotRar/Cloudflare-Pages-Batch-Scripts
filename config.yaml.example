@@ -3,6 +3,10 @@ Mypageskvyes: &Mypageskvyes {kv_create: true, kv_binding: true, kv_binding_env: 
 Mypageskvno: &Mypageskvno {kv_create: false, kv_binding: false, project_type: production}
 MyDNS: &MyDNS {dns_token: cfat_0000000000000000000000000000000000000000, zone_id: 00000000000000000000000000000000, type: CNAME, proxied: false, ttl: auto}
 
+# 可选：HTTP/S 代理，用于源码下载与 Cloudflare API 请求。
+# 留空或删除时信任环境变量代理（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY）。
+proxy: http://127.0.0.1:7890
+
 files_to_redeploy:
   dir: files-to-redeploy
   download_url: https://example.com/source.zip

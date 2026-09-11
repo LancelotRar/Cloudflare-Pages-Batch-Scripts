@@ -70,6 +70,33 @@ class TestPrepareSource:
         assert marker.exists()
         assert not (deploy_dir.parent / ".deploy.download.tmp").exists()
 
+    def test_proxy_from_cfg_is_used_for_download(self, tmp_path: Path):
+        """下载使用 cfg.proxy 作为代理。"""
+        deploy_dir = tmp_path / "deploy"
+        cfg = Config(
+            files_to_redeploy=FilesToRedeploy(
+                dir=str(deploy_dir),
+                download_url="https://github.com/cmliu/edgetunnel/archive/refs/heads/main.zip",
+            ),
+            proxy="http://127.0.0.1:7890",
+        )
+
+        class FakeResponse:
+            def __init__(self, content: bytes) -> None:
+                self.content = content
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with patch(
+            "cf_pages_batch_scripts.workflows.httpx.get",
+            return_value=FakeResponse(self.make_zip_bytes()),
+        ) as mock_get:
+            src = prepare_source(cfg)
+
+        assert src is not None
+        assert mock_get.call_args.kwargs.get("proxy") == "http://127.0.0.1:7890"
+
 
 class TestSetProjectConfig:
     def test_env_whitelist_deletes_extra_variables(self):
@@ -132,6 +159,36 @@ class TestSetProjectConfig:
         assert set_project_config(api, account, ns_id="ns-9") is True
         api.patch_project_config.assert_called_once_with("p", {
             "production": {"kv_namespaces": {"OLD": None, "KV": {"namespace_id": "ns-9"}}}
+        })
+
+    def test_null_env_vars_and_kv_namespaces_do_not_crash(self):
+        """CF API 对新建项目返回 env_vars/kv_namespaces 为 null 而非 {}，不应触发迭代异常。"""
+        api = Mock()
+        api.get_project.return_value = {
+            "deployment_configs": {
+                "production": {
+                    "env_vars": None,
+                    "kv_namespaces": None,
+                }
+            }
+        }
+        api.patch_project_config.return_value = True
+        pages = PagesConfig(
+            project_name="p",
+            env=[EnvVar(name="KEEP", var_type="plain_text", value="v")],
+            kv_create=True,
+            kv_namespace="ns",
+            kv_binding=True,
+            kv_binding_env="KV",
+        )
+        account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
+
+        assert set_project_config(api, account, ns_id="nsid") is True
+        api.patch_project_config.assert_called_once_with("p", {
+            "production": {
+                "env_vars": {"KEEP": {"value": "v", "type": "plain_text"}},
+                "kv_namespaces": {"KV": {"namespace_id": "nsid"}},
+            }
         })
 
     def test_kv_create_on_without_binding_env_fails(self):

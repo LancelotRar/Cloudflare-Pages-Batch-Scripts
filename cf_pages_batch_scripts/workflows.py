@@ -43,7 +43,7 @@ def prepare_source(cfg: Config) -> Path | None:
     tmp_dir.mkdir(parents=True)
 
     try:
-        resp = httpx.get(fr.download_url, timeout=300, follow_redirects=True)
+        resp = httpx.get(fr.download_url, timeout=300, follow_redirects=True, proxy=cfg.proxy or None)
         resp.raise_for_status()
 
         zip_path = tmp_dir / "source.zip"
@@ -91,7 +91,7 @@ def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = N
 
     env_key = account.pages.project_type
     target_envs = [env_key] if env_key in {"production", "preview"} else ["production", "preview"]
-    current_configs = project.get("deployment_configs", {})
+    current_configs = project.get("deployment_configs", {}) or {}
     dep_cfg: dict[str, dict] = {}
     managed_env_names = {ev.name for ev in account.pages.env if ev.name}
     desired_env_vars = {
@@ -101,10 +101,10 @@ def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = N
     }
 
     for target_env in target_envs:
-        current = current_configs.get(target_env, {})
+        current = current_configs.get(target_env, {}) or {}
         cfg: dict = {}
         if manage_env:
-            current_env_vars = current.get("env_vars", {})
+            current_env_vars = current.get("env_vars", {}) or {}
             cfg["env_vars"] = {
                 **{name: None for name in current_env_vars if name not in managed_env_names},
                 **desired_env_vars,
@@ -113,7 +113,7 @@ def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = N
             if not ns_id or not account.pages.kv_binding_env:
                 print_error("  KV 已启用，但命名空间 ID 或绑定名无效")
                 return False
-            current_kv = current.get("kv_namespaces", {})
+            current_kv = current.get("kv_namespaces", {}) or {}
             desired_kv = {
                 account.pages.kv_binding_env: {"namespace_id": ns_id}
             }
@@ -302,7 +302,7 @@ def _run_wrangler(source_dir: Path, project: str, token: str, account_id: str, s
         return False
 
 
-def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool:
+def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: str = "") -> bool:
     """Full deploy workflow for a single account."""
     project = account.pages.project_name
     print_header(f"部署：{account.name} → {project}")
@@ -371,7 +371,7 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path) -> bool
             print_error("  DNS 配置缺少独立的 dns_token")
             dns_synced = False
         else:
-            with CfApiClient(account.account_id, account.dns.token) as dns_api:
+            with CfApiClient(account.account_id, account.dns.token, proxy=proxy) as dns_api:
                 dns_synced = sync_dns_record(dns_api, account)
     except Exception as exc:
         print_error(f"  DNS 同步异常：{exc}")
@@ -420,8 +420,8 @@ def deploy_workflow(cfg: Config) -> None:
     results: list[tuple[Account, bool]] = []
     for account in selected:
         try:
-            with CfApiClient(account.account_id, account.token) as api:
-                success = deploy_project(api, account, source_dir)
+            with CfApiClient(account.account_id, account.token, proxy=cfg.proxy) as api:
+                success = deploy_project(api, account, source_dir, proxy=cfg.proxy)
         except Exception as exc:
             print_error(f"账号 '{account.name}' 执行异常：{exc}")
             success = False
@@ -450,7 +450,7 @@ def delete_workflow(cfg: Config) -> None:
     print_header("批量删除")
 
     for account in selected_accounts:
-        with CfApiClient(account.account_id, account.token) as api:
+        with CfApiClient(account.account_id, account.token, proxy=cfg.proxy) as api:
             print_header(f"--- {account.name} ---")
 
             # 按配置删除自定义域名

@@ -108,6 +108,7 @@ def load_config(path: Path | None = None) -> Config:
 
     return Config(
         files_to_redeploy=_parse_files_to_redeploy(raw),
+        proxy=_get_str(raw or {}, "proxy"),
         accounts=_parse_accounts(raw),
     )
 
