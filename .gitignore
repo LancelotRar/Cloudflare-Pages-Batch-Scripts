@@ -14,7 +14,10 @@ build/
 .codegraph/
 files-to-redeploy/
 /config.yaml
+/config-ch.yaml
+/config-gp.yaml
 /UUID.txt
+/local-use.txt
 
 # OS
 .DS_Store
