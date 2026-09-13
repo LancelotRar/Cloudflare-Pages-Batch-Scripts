@@ -11,7 +11,7 @@
 
 ---
 
-多账号 Cloudflare Pages 批量部署/删除工具。从 ZIP 下载源码 → 创建 Pages 项目 → wrangler 上传 → 配置环境变量 + KV 绑定 + 自定义域名 → 重新部署 → 同步 DNS 记录，全流程自动化。
+多账号 Cloudflare Pages 批量部署/删除工具。从 ZIP 下载源码 → 创建 Pages 项目 → wrangler 上传 → 配置环境变量 + KV 绑定 + 自定义域名 → 重新部署 → 同步 DNS 记录，全流程自动化。支持通过 HTTP/S 代理（`proxy` 配置）下载源码与请求 Cloudflare API。
 
 - 部署界面
 
@@ -134,11 +134,11 @@ cf_pages_batch_scripts
 └───────────────────────────────────────────────┘
 
 [A]ll 全部账号
-# 输入序号（如 1 或 1,3,5）选择单个或多个账号
+# 输入序号（如 1、1,3,5 或 1-3）选择单个或多个账号
 [Q]uit 退出
 ```
 
-输入 `A` 全选、`1,3,5` 选择多个账号，或 `Q` 退出。
+输入 `A` 全选、`1,3,5` 选择多个账号、`1-3` 选择区间，或 `Q` 退出。
 
 也可直接指定虚拟环境中的 Python 运行（无需先激活）：
 
@@ -169,6 +169,10 @@ Myenv: &Myenv [{name: UUID, type: plain_text, value: 550e8400-e28b-41d4-a716-446
 Mypageskvyes: &Mypageskvyes {kv_create: true, kv_binding: true, kv_binding_env: KV, project_type: production}
 Mypageskvno: &Mypageskvno {kv_create: false, kv_binding: false, project_type: production}
 MyDNS: &MyDNS {dns_token: cfat_0000000000000000000000000000000000000000, zone_id: 00000000000000000000000000000000, type: CNAME, proxied: false, ttl: auto}
+
+# 可选：HTTP/S 代理，用于源码下载与 Cloudflare API 请求。
+# 留空或删除时信任环境变量代理（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY）。
+proxy: http://127.0.0.1:7890
 
 files_to_redeploy:
   dir: files-to-redeploy
@@ -239,6 +243,7 @@ accounts:
 
 | 路径 | 字段 | 说明 |
 |---|---|---|
+| (全局) | `proxy` | 可选 HTTP/S 代理，用于源码 ZIP 下载与 Cloudflare API 请求；留空或删除时信任环境变量代理（`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`） |
 | `files_to_redeploy` | `dir` | 源码解压目录名 |
 | | `download_url` | 部署源码 ZIP 下载地址 |
 | `accounts[]` | `name` | 显示名称 |
@@ -314,6 +319,7 @@ cf_pages_batch_scripts/
 │   ├── api.py             # Cloudflare REST API 客户端
 │   ├── ui.py              # 交互界面（基于 Rich）
 │   └── workflows.py       # 部署/删除工作流逻辑
+├── tests/                 # pytest 单元测试
 ├── config.yaml.example    # 配置文件模板
 ├── pyproject.toml         # 项目元数据与依赖声明
 └── README.md
