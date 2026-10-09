@@ -24,7 +24,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-01.example.com
       content: my-project-01.pages.dev
 
   - name: account-02
@@ -39,7 +38,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-02.example.com
       content: my-project-02.pages.dev
 
   - name: account-03
@@ -53,7 +51,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-03.example.com
       content: my-project-03.pages.dev
 
   - name: account-04
@@ -67,7 +64,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-04.example.com
       content: my-project-04.pages.dev
 
   - name: account-05
@@ -81,7 +77,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-05.example.com
       content: my-project-05.pages.dev
 
   - name: account-06
@@ -95,7 +90,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-06.example.com
       content: my-project-06.pages.dev
 
   - name: account-07
@@ -109,7 +103,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-07.example.com
       content: my-project-07.pages.dev
 
   - name: account-08
@@ -123,7 +116,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-08.example.com
       content: my-project-08.pages.dev
 
   - name: account-09
@@ -137,7 +129,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-09.example.com
       content: my-project-09.pages.dev
 
   - name: account-10
@@ -151,7 +142,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-10.example.com
       content: my-project-10.pages.dev
 
   - name: account-11
@@ -165,7 +155,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-11.example.com
       content: my-project-11.pages.dev
 
   - name: account-12
@@ -179,5 +168,4 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-12.example.com
       content: my-project-12.pages.dev

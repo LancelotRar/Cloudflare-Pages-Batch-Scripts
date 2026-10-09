@@ -76,7 +76,6 @@ def _parse_dns_config(raw_dns: dict) -> DnsConfig:
         token=_get_str(raw_dns, "dns_token"),
         zone_id=_get_str(raw_dns, "zone_id"),
         record_type=_get_str(raw_dns, "type", "CNAME").upper(),
-        name=_get_str(raw_dns, "name"),
         content=_get_str(raw_dns, "content"),
         proxied=_get_bool(raw_dns, "proxied"),
         ttl=ttl,

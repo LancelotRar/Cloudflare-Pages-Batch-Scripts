@@ -24,11 +24,10 @@ class PagesConfig:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DnsConfig:
-    """单个 DNS 记录配置。"""
+    """单个 DNS 记录配置。记录名与 pages.domain 同源，不再单独配置。"""
     token: str = field(default="", repr=False)
     zone_id: str = ""
     record_type: str = "CNAME"
-    name: str = ""
     content: str = ""
     proxied: bool = False
     ttl: int = 1

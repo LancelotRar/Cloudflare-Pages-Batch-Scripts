@@ -106,7 +106,7 @@ class TestAccount:
         assert DnsConfig().ttl == 1
 
     def test_dns_config(self):
-        dns = DnsConfig(zone_id="zone", name="app.example.com", content="target.pages.dev")
+        dns = DnsConfig(zone_id="zone", content="target.pages.dev")
         assert dns.zone_id == "zone"
 
     def test_account_dns(self):

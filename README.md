@@ -191,7 +191,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-01.example.com
       content: my-project-01.pages.dev
 
   - name: account-02
@@ -206,7 +205,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-02.example.com
       content: my-project-02.pages.dev
 
   - name: account-03
@@ -220,7 +218,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-03.example.com
       content: my-project-03.pages.dev
 
   - name: account-04
@@ -234,7 +231,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      name: my-project-04.example.com
       content: my-project-04.pages.dev
 
 ```
@@ -263,8 +259,7 @@ accounts:
 | `accounts[].dns` | `zone_id` | 托管目标域名账户中的 Zone ID，与当前 Pages 账户的 `account_id` 无关 |
 | | `dns_token` | 托管目标域名账户的独立 API Token，需对目标 Zone 具有 `DNS Write` 权限；不会使用当前 Pages 账户的 `token` |
 | | `type` | DNS 记录类型，默认 `CNAME` |
-| | `name` | 完整 DNS 记录名称 |
-| | `content` | DNS 记录目标值 |
+| | `content` | DNS 记录目标值（记录名取 `pages.domain`，不再单独配置） |
 | | `proxied` | 是否启用 Cloudflare 代理 |
 | | `ttl` | TTL 秒数；`auto` 表示自动（API 值 `1`） |
 

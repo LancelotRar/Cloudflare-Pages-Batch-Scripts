@@ -265,16 +265,17 @@ class TestSyncProjectDomain:
 
 
 class TestSyncDnsRecord:
-    def make_account(self, dns: DnsConfig) -> Account:
+    def make_account(self, dns: DnsConfig, domain: str = "app.example.com") -> Account:
         return Account(
-            name="a", enabled=True, token="t", account_id="aid", pages=PagesConfig(project_name="p"), dns=dns
+            name="a", enabled=True, token="t", account_id="aid",
+            pages=PagesConfig(project_name="p", domain=domain), dns=dns,
         )
 
     def test_creates_missing_record(self):
         api = Mock()
         api.list_dns_records.return_value = []
         api.create_dns_record.return_value = {"success": True}
-        dns = DnsConfig(zone_id="zone", name="app.example.com", content="target.pages.dev")
+        dns = DnsConfig(zone_id="zone", content="target.pages.dev")
 
         assert sync_dns_record(api, self.make_account(dns)) is True
         api.create_dns_record.assert_called_once_with("zone", {
@@ -287,7 +288,7 @@ class TestSyncDnsRecord:
             "id": "r1", "type": "CNAME", "name": "app.example.com",
             "content": "target.pages.dev", "proxied": False, "ttl": 1,
         }]
-        dns = DnsConfig(zone_id="zone", name="app.example.com", content="target.pages.dev")
+        dns = DnsConfig(zone_id="zone", content="target.pages.dev")
 
         assert sync_dns_record(api, self.make_account(dns)) is True
         api.update_dns_record.assert_not_called()
@@ -299,7 +300,7 @@ class TestSyncDnsRecord:
             "content": "target.pages.dev", "proxied": False, "ttl": 1,
         }]
         api.update_dns_record.return_value = {"success": True}
-        dns = DnsConfig(zone_id="zone", name="app.example.com", content="target.pages.dev")
+        dns = DnsConfig(zone_id="zone", content="target.pages.dev")
 
         assert sync_dns_record(api, self.make_account(dns)) is True
         api.update_dns_record.assert_called_once_with("zone", "r1", {
@@ -312,7 +313,7 @@ class TestSyncDnsRecord:
             "id": "old", "type": "A", "name": "old.example.com", "content": "target.pages.dev",
         }]
         api.update_dns_record.return_value = {"success": True}
-        dns = DnsConfig(zone_id="zone", name="app.example.com", content="target.pages.dev")
+        dns = DnsConfig(zone_id="zone", content="target.pages.dev")
 
         assert sync_dns_record(api, self.make_account(dns)) is True
         assert api.method_calls == [
@@ -325,15 +326,18 @@ class TestSyncDnsRecord:
 
 class TestDeployProjectDnsResult:
     def make_account(self) -> Account:
-        dns = DnsConfig(token="dns-token", zone_id="zone", name="app.example.com", content="target.pages.dev")
+        dns = DnsConfig(token="dns-token", zone_id="zone", content="target.pages.dev")
         return Account(
-            name="a", enabled=True, token="t", account_id="aid", pages=PagesConfig(project_name="p"), dns=dns
+            name="a", enabled=True, token="t", account_id="aid",
+            pages=PagesConfig(project_name="p", domain="app.example.com"), dns=dns,
         )
 
     @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
     def test_dns_failure_fails_account_after_deployment(self, run_wrangler: Mock):
         api = Mock()
         api.create_project.return_value = {"success": True}
+        api.list_domains.return_value = []
+        api.add_domain.return_value = {"success": True}
         api.list_dns_records.return_value = None
 
         assert deploy_project(api, self.make_account(), Path("source")) is False
@@ -344,6 +348,8 @@ class TestDeployProjectDnsResult:
     def test_dns_exception_fails_account_after_deployment(self, run_wrangler: Mock, sync_dns: Mock):
         api = Mock()
         api.create_project.return_value = {"success": True}
+        api.list_domains.return_value = []
+        api.add_domain.return_value = {"success": True}
 
         assert deploy_project(api, self.make_account(), Path("source")) is False
         assert run_wrangler.call_count == 2

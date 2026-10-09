@@ -162,9 +162,10 @@ def sync_project_domain(api: CfApiClient, project: str, target_domain: str) -> b
 
 
 def sync_dns_record(api: CfApiClient, account: Account) -> bool:
-    """Create or update the configured DNS record."""
+    """Create or update the configured DNS record. 记录名取 pages.domain。"""
     dns = account.dns
-    if not dns.zone_id or not dns.name or not dns.content:
+    domain = account.pages.domain
+    if not dns.zone_id or not domain or not dns.content:
         return True
 
     print_info(f"  正在按内容查询 DNS 记录 '{dns.content}' ...")
@@ -185,51 +186,51 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
         for duplicate in matches[1:]:
             record_id = duplicate.get("id")
             if not isinstance(record_id, str) or not record_id:
-                print_error(f"  重复 DNS 记录缺少 ID，无法删除：{dns.name}")
+                print_error(f"  重复 DNS 记录缺少 ID，无法删除：{domain}")
                 return False
             result = api.delete_dns_record(dns.zone_id, record_id)
             if not result or not result.get("success"):
-                print_error(f"  删除重复 DNS 记录失败：{dns.name}")
+                print_error(f"  删除重复 DNS 记录失败：{domain}")
                 return False
         matches = [keep]
 
     payload = {
         "type": dns.record_type,
-        "name": dns.name,
+        "name": domain,
         "content": dns.content,
         "proxied": dns.proxied,
         "ttl": dns.ttl,
     }
     if not matches:
-        print_info(f"  正在创建 DNS 记录 '{dns.name}' ...")
+        print_info(f"  正在创建 DNS 记录 '{domain}' ...")
         result = api.create_dns_record(dns.zone_id, payload)
         if not result or not result.get("success"):
-            print_error(f"  创建 DNS 记录失败：{dns.name}")
+            print_error(f"  创建 DNS 记录失败：{domain}")
             return False
-        print_ok(f"  DNS 记录已创建：{dns.name} -> {dns.content}")
+        print_ok(f"  DNS 记录已创建：{domain} -> {dns.content}")
         return True
 
     current = matches[0]
     is_current = (
-        str(current.get("name", "")).rstrip(".").lower() == dns.name.rstrip(".").lower()
+        str(current.get("name", "")).rstrip(".").lower() == domain.rstrip(".").lower()
         and str(current.get("type", "")).upper() == dns.record_type
         and current.get("proxied", False) is dns.proxied
         and current.get("ttl") == dns.ttl
     )
     if is_current:
-        print_ok(f"  DNS 记录已是目标配置，跳过：{dns.name}")
+        print_ok(f"  DNS 记录已是目标配置，跳过：{domain}")
         return True
 
     record_id = current.get("id")
     if not isinstance(record_id, str) or not record_id:
-        print_error(f"  DNS 记录缺少 ID，无法修改：{dns.name}")
+        print_error(f"  DNS 记录缺少 ID，无法修改：{domain}")
         return False
-    print_info(f"  正在修改 DNS 记录 '{dns.name}' ...")
+    print_info(f"  正在修改 DNS 记录 '{domain}' ...")
     result = api.update_dns_record(dns.zone_id, record_id, payload)
     if not result or not result.get("success"):
-        print_error(f"  修改 DNS 记录失败：{dns.name}")
+        print_error(f"  修改 DNS 记录失败：{domain}")
         return False
-    print_ok(f"  DNS 记录已修改：{dns.name} -> {dns.content}")
+    print_ok(f"  DNS 记录已修改：{domain} -> {dns.content}")
     return True
 
 
@@ -364,7 +365,7 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: 
 
     # DNS 在项目部署后执行，但仍属于该账号的声明配置
     try:
-        dns_configured = bool(account.dns.zone_id and account.dns.name and account.dns.content)
+        dns_configured = bool(account.dns.zone_id and account.pages.domain and account.dns.content)
         if not dns_configured:
             dns_synced = True
         elif not account.dns.token:
