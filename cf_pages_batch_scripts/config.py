@@ -33,7 +33,7 @@ def find_config() -> Path:
 
 def _parse_files_to_redeploy(raw: dict | None) -> FilesToRedeploy:
     """从原始 YAML dict 解析 FilesToRedeploy。"""
-    fr = raw.get("files_to_redeploy", {}) if raw else {}
+    fr = (raw.get("files_to_redeploy") or {}) if raw else {}
     return FilesToRedeploy(
         dir=_get_str(fr, "dir", "files-to-redeploy"),
         download_url=_get_str(fr, "download_url"),
@@ -42,14 +42,22 @@ def _parse_files_to_redeploy(raw: dict | None) -> FilesToRedeploy:
 
 def _parse_env_vars(raw_pages: dict) -> list[EnvVar]:
     """从原始 YAML dict 解析环境变量列表。"""
-    return [
-        EnvVar(name=_get_str(ev, "name"), var_type=_get_str(ev, "type"), value=_get_str(ev, "value"))
-        for ev in raw_pages.get("env", [])
-    ]
+    raw_env = raw_pages.get("env") or []
+    if not isinstance(raw_env, list):
+        raise ValueError(f"pages.env 必须是列表，当前为 {type(raw_env).__name__}")
+    envs: list[EnvVar] = []
+    for index, ev in enumerate(raw_env, start=1):
+        if not isinstance(ev, dict):
+            raise ValueError(f"pages.env 第 {index} 项必须是映射（name/type/value），当前为 {ev!r}")
+        envs.append(EnvVar(name=_get_str(ev, "name"), var_type=_get_str(ev, "type"), value=_get_str(ev, "value")))
+    return envs
 
 
 def _parse_pages_config(raw_pages: dict) -> PagesConfig:
     """从原始 YAML dict 解析 PagesConfig。"""
+    project_type = _get_str(raw_pages, "project_type", "production")
+    if project_type not in {"production", "preview"}:
+        raise ValueError(f"pages.project_type 配置无效：{project_type!r}（应为 'production' 或 'preview'）")
     return PagesConfig(
         project_name=_get_str(raw_pages, "project_name"),
         domain=_get_str(raw_pages, "domain"),
@@ -57,7 +65,7 @@ def _parse_pages_config(raw_pages: dict) -> PagesConfig:
         kv_namespace=_get_str(raw_pages, "kv_namespace"),
         kv_binding=_get_bool(raw_pages, "kv_binding"),
         kv_binding_env=_get_str(raw_pages, "kv_binding_env"),
-        project_type=_get_str(raw_pages, "project_type", "production"),
+        project_type=project_type,
         env=_parse_env_vars(raw_pages),
     )
 
@@ -84,15 +92,20 @@ def _parse_dns_config(raw_dns: dict) -> DnsConfig:
 
 def _parse_accounts(raw: dict | None) -> list[Account]:
     """从原始 YAML dict 解析账号列表。"""
+    raw_accounts = (raw.get("accounts") or []) if raw else []
+    if not isinstance(raw_accounts, list):
+        raise ValueError(f"accounts 必须是列表，当前为 {type(raw_accounts).__name__}")
     accounts: list[Account] = []
-    for raw_acct in (raw.get("accounts", []) if raw else []):
+    for index, raw_acct in enumerate(raw_accounts, start=1):
+        if not isinstance(raw_acct, dict):
+            raise ValueError(f"accounts 第 {index} 项必须是映射，当前为 {raw_acct!r}")
         accounts.append(Account(
             name=_get_str(raw_acct, "name"),
             enabled=_get_bool(raw_acct, "enabled"),
             token=_get_str(raw_acct, "token"),
             account_id=_get_str(raw_acct, "account_id"),
-            pages=_parse_pages_config(raw_acct.get("pages", {})),
-            dns=_parse_dns_config(raw_acct.get("dns", {})),
+            pages=_parse_pages_config(raw_acct.get("pages") or {}),
+            dns=_parse_dns_config(raw_acct.get("dns") or {}),
         ))
     return accounts
 
@@ -104,6 +117,9 @@ def load_config(path: Path | None = None) -> Config:
 
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
+
+    if raw is not None and not isinstance(raw, dict):
+        raise ValueError(f"配置文件 {path} 顶层必须是 key: value 映射，当前为 {type(raw).__name__}")
 
     return Config(
         files_to_redeploy=_parse_files_to_redeploy(raw),

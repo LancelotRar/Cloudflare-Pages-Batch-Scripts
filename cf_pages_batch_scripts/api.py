@@ -1,10 +1,22 @@
+import ssl
 import time
+from functools import lru_cache
 from types import TracebackType
 from urllib.parse import quote, urlencode
 
 import httpx
 
 CF_API_BASE = "https://api.cloudflare.com/client/v4"
+
+
+@lru_cache(maxsize=1)
+def shared_ssl_context() -> ssl.SSLContext:
+    """进程级共享 SSLContext，避免每次构造 httpx.Client 都重复加载 CA 证书包。
+
+    实测每次加载约 0.5~0.8s，带代理时单个 Client 构造可达 3~6s，
+    多账号批量部署会累积成分钟级的无谓等待。
+    """
+    return httpx.create_ssl_context()
 
 
 class CfApiClient:
@@ -21,6 +33,7 @@ class CfApiClient:
             },
             timeout=timeout,
             proxy=proxy or None,
+            verify=shared_ssl_context(),
         )
 
     def _request(self, method: str, path: str, body: dict | None = None) -> dict | None:
@@ -71,29 +84,35 @@ class CfApiClient:
     @staticmethod
     def _format_api_errors(status_code: int, data: dict) -> str:
         errors = data.get("errors", [])
-        details = "; ".join(
-            f"[{error.get('code')}]: {error.get('message')}"
-            for error in errors
-            if isinstance(error, dict)
-        )
-        return f"Cloudflare API {status_code} {details}".rstrip()
+        parts: list[str] = []
+        for error in errors:
+            if not isinstance(error, dict):
+                continue
+            code = error.get("code")
+            message = error.get("message")
+            parts.append(f"[{code}]: {message}" if code is not None else str(message))
+        return f"Cloudflare API {status_code} {'; '.join(parts)}".rstrip()
 
-    def _paginated_get(self, path: str) -> list[dict]:
-        """Fetch all pages of a paginated GET endpoint."""
+    def _paginated_get(self, path: str) -> list[dict] | None:
+        """Fetch all pages of a paginated GET endpoint.
+
+        请求失败（网络错误或 success=false）时返回 None，以区别于“结果为空”。
+        """
         results: list[dict] = []
         page = 1
         while True:
             url = self._add_query_param(self._add_query_param(path, "page", page), "per_page", 50)
             data = self._request("GET", url)
-            if not data or not data.get("success"):
-                break
-            results.extend(data.get("result", []))
-            result_info = data.get("result_info", {})
+            if data is None or not data.get("success"):
+                if data is not None and not self.last_error:
+                    self.last_error = self._format_api_errors(200, data)
+                return None
+            results.extend(data.get("result") or [])
+            result_info = data.get("result_info", {}) or {}
             total_pages = result_info.get("total_pages", 1)
             if page >= total_pages:
-                break
+                return results
             page += 1
-        return results
 
     def get_project(self, name: str) -> dict | None:
         data = self._request("GET", f"/pages/projects/{quote(name, safe='')}")
@@ -165,7 +184,7 @@ class CfApiClient:
         url = f"{CF_API_BASE}/zones/{zone_id}/dns_records/{record_id}"
         return self._request_url("DELETE", url)
 
-    def list_kv_namespaces(self) -> list[dict]:
+    def list_kv_namespaces(self) -> list[dict] | None:
         return self._paginated_get("/storage/kv/namespaces")
 
     def create_kv_namespace(self, title: str) -> dict | None:
@@ -184,6 +203,8 @@ class CfApiClient:
         if not title:
             return None, False
         namespaces = self.list_kv_namespaces()
+        if namespaces is None:
+            return None, False
         for ns in namespaces:
             if ns.get("title") == title:
                 ns_id: str | None = ns.get("id")

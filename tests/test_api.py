@@ -142,7 +142,14 @@ class TestPaginatedGet:
             json={"success": False, "errors": [{"message": "Auth failed"}]},
         )
         results = client._paginated_get("/storage/kv/namespaces")
-        assert results == []
+        assert results is None
+        assert client.last_error is not None
+        assert "Auth failed" in client.last_error
+
+    def test_network_error_returns_none(self, client: CfApiClient, httpx_mock: HTTPXMock):
+        for _ in range(3):
+            httpx_mock.add_exception(httpx.ConnectError("boom"))
+        assert client._paginated_get("/storage/kv/namespaces") is None
 
 
 class TestAddQueryParam:
@@ -313,6 +320,30 @@ class TestApiMethods:
 
     def test_ensure_kv_namespace_empty_title(self, client: CfApiClient):
         assert client.ensure_kv_namespace("") == (None, False)
+
+    def test_ensure_kv_namespace_list_error_does_not_create(self, client: CfApiClient, httpx_mock: HTTPXMock):
+        """查询失败必须报错，而不是误判为空后重复创建同名命名空间。"""
+        httpx_mock.add_response(
+            url=f"{API_BASE}/accounts/test_account/storage/kv/namespaces?page=1&per_page=50",
+            json={"success": False, "errors": [{"code": 10000, "message": "Auth error"}]},
+        )
+        assert client.ensure_kv_namespace("my-ns") == (None, False)
+        assert "Auth error" in (client.last_error or "")
+
+
+class TestSharedSslContext:
+    def test_ssl_context_built_once_per_process(self, monkeypatch: pytest.MonkeyPatch):
+        """SSLContext 必须进程级缓存：重复构建 CA 证书是历史性能瓶颈。"""
+        api_module.shared_ssl_context.cache_clear()
+        try:
+            calls: list[int] = []
+            monkeypatch.setattr(httpx, "create_ssl_context", lambda: (calls.append(1), object())[1])
+            first = api_module.shared_ssl_context()
+            second = api_module.shared_ssl_context()
+            assert first is second
+            assert len(calls) == 1
+        finally:
+            api_module.shared_ssl_context.cache_clear()
 
 
 class TestContextManager:

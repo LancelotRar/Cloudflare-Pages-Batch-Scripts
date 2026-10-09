@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 
-from .api import CfApiClient
+from .api import CfApiClient, shared_ssl_context
 from .config import get_enabled_accounts
 from .models import Account, Config
 from .ui import (
@@ -43,7 +43,13 @@ def prepare_source(cfg: Config) -> Path | None:
     tmp_dir.mkdir(parents=True)
 
     try:
-        resp = httpx.get(fr.download_url, timeout=300, follow_redirects=True, proxy=cfg.proxy or None)
+        resp = httpx.get(
+            fr.download_url,
+            timeout=300,
+            follow_redirects=True,
+            proxy=cfg.proxy or None,
+            verify=shared_ssl_context(),
+        )
         resp.raise_for_status()
 
         zip_path = tmp_dir / "source.zip"
@@ -450,44 +456,56 @@ def delete_workflow(cfg: Config) -> None:
 
     print_header("批量删除")
 
+    failed: list[Account] = []
     for account in selected_accounts:
-        with CfApiClient(account.account_id, account.token, proxy=cfg.proxy) as api:
-            print_header(f"--- {account.name} ---")
+        try:
+            with CfApiClient(account.account_id, account.token, proxy=cfg.proxy) as api:
+                print_header(f"--- {account.name} ---")
 
-            # 按配置删除自定义域名
-            domain = account.pages.domain
-            proj_name = account.pages.project_name
-            if domain:
-                print_info(f"正在删除域名 '{domain}' ...")
-                result = api.delete_domain(proj_name, domain)
+                # 按配置删除自定义域名
+                domain = account.pages.domain
+                proj_name = account.pages.project_name
+                if domain:
+                    print_info(f"正在删除域名 '{domain}' ...")
+                    result = api.delete_domain(proj_name, domain)
+                    if result and result.get("success"):
+                        print_ok(f"    已删除域名 {domain}")
+                    else:
+                        print_warn(f"    域名删除可能失败：{domain}")
+
+                # 按配置删除项目
+                print_info(f"正在删除项目 '{proj_name}' ...")
+                result = api.delete_project(proj_name)
                 if result and result.get("success"):
-                    print_ok(f"    已删除域名 {domain}")
+                    print_ok(f"  已删除 {proj_name}")
                 else:
-                    print_warn(f"    域名删除可能失败：{domain}")
+                    print_warn(f"  项目 '{proj_name}' 不存在或删除失败")
 
-            # 按配置删除项目
-            print_info(f"正在删除项目 '{proj_name}' ...")
-            result = api.delete_project(proj_name)
-            if result and result.get("success"):
-                print_ok(f"  已删除 {proj_name}")
-            else:
-                print_warn(f"  项目 '{proj_name}' 不存在或删除失败")
-
-            # 按配置删除 KV 命名空间（受 kv_create 总开关门控；需查 ID，唯一一次 CF 查询）
-            kv_name = account.pages.kv_namespace if account.pages.kv_create else ""
-            if kv_name:
-                for ns in api.list_kv_namespaces():
-                    if ns.get("title") == kv_name:
-                        ns_id = ns.get("id", "")
-                        print_info(f"正在删除 KV 命名空间 '{kv_name}' ...")
-                        result = api.delete_kv_namespace(ns_id)
-                        if result and result.get("success"):
-                            print_ok(f"  已删除 {kv_name}")
+                # 按配置删除 KV 命名空间（受 kv_create 总开关门控；需查 ID，唯一一次 CF 查询）
+                kv_name = account.pages.kv_namespace if account.pages.kv_create else ""
+                if kv_name:
+                    namespaces = api.list_kv_namespaces()
+                    if namespaces is None:
+                        print_warn(f"  查询 KV 命名空间失败，跳过清理：{api.last_error or '未知原因'}")
+                    else:
+                        for ns in namespaces:
+                            if ns.get("title") == kv_name:
+                                ns_id = ns.get("id", "")
+                                print_info(f"正在删除 KV 命名空间 '{kv_name}' ...")
+                                result = api.delete_kv_namespace(ns_id)
+                                if result and result.get("success"):
+                                    print_ok(f"  已删除 {kv_name}")
+                                else:
+                                    print_error(f"  失败：{kv_name}")
+                                break
                         else:
-                            print_error(f"  失败：{kv_name}")
-                        break
-                else:
-                    print_info(f"  KV 命名空间 '{kv_name}' 不存在，跳过")
+                            print_info(f"  KV 命名空间 '{kv_name}' 不存在，跳过")
+        except Exception as exc:
+            print_error(f"账号 '{account.name}' 执行异常：{exc}")
+            failed.append(account)
 
     print_ok("========== 删除完成 ==========")
+    print_info(f"成功：{len(selected_accounts) - len(failed)}，失败：{len(failed)}")
+    for account in failed:
+        print_error(f"  失败账号：{account.name}")
     wait_enter()

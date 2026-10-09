@@ -2,6 +2,8 @@ import argparse
 import traceback
 from pathlib import Path
 
+import yaml
+
 from .config import load_config
 from .ui import main_menu, print_error, wait_enter
 from .workflows import delete_workflow, deploy_workflow
@@ -18,7 +20,7 @@ def main() -> None:
     args = _parse_args()
     try:
         cfg = load_config(path=args.config)
-    except FileNotFoundError as e:
+    except (OSError, ValueError, yaml.YAMLError) as e:
         print_error(str(e))
         wait_enter()
         return

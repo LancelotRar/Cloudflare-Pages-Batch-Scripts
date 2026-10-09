@@ -475,3 +475,43 @@ class TestDeleteWorkflowKv:
         self.run_delete(self.make_account(kv_create=True, kv_namespace=""), api)
         api.list_kv_namespaces.assert_not_called()
         api.delete_kv_namespace.assert_not_called()
+
+    def test_kv_list_query_failure_skips_kv_deletion(self, capsys):
+        api = self.make_api()
+        api.list_kv_namespaces.return_value = None
+        api.last_error = "Cloudflare API 500"
+        self.run_delete(self.make_account(kv_create=True, kv_namespace="ns"), api)
+        api.delete_project.assert_called_once_with("p")
+        api.delete_kv_namespace.assert_not_called()
+        assert "查询 KV 命名空间失败" in capsys.readouterr().out
+
+
+class TestDeleteWorkflowResilience:
+    """单个账号异常不应中断其余账号的删除。"""
+
+    def test_account_exception_does_not_abort_remaining(self, capsys):
+        acc1 = Account(
+            name="a1", enabled=True, token="t", account_id="aid",
+            pages=PagesConfig(project_name="p1", domain="d1.example.com"),
+        )
+        acc2 = Account(
+            name="a2", enabled=True, token="t", account_id="aid",
+            pages=PagesConfig(project_name="p2"),
+        )
+        api1 = Mock()
+        api1.delete_domain.side_effect = RuntimeError("boom")
+        api2 = Mock()
+        api2.delete_project.return_value = {"success": True}
+
+        with (
+            patch("cf_pages_batch_scripts.workflows.CfApiClient") as client_cls,
+            patch("cf_pages_batch_scripts.workflows.select_accounts", return_value=[acc1, acc2]),
+            patch("cf_pages_batch_scripts.workflows.wait_enter"),
+        ):
+            client_cls.return_value.__enter__.side_effect = [api1, api2]
+            delete_workflow(Config(accounts=[acc1, acc2]))
+
+        api2.delete_project.assert_called_once_with("p2")
+        out = capsys.readouterr().out
+        assert "执行异常" in out
+        assert "失败账号：a1" in out

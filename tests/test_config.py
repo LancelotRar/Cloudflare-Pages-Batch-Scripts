@@ -213,3 +213,48 @@ class TestLoadConfig:
         cfg = load_config(cfg_path)
         assert cfg.files_to_redeploy.dir == "files-to-redeploy"
         assert cfg.accounts == []
+
+
+class TestConfigRobustness:
+    """空值/类型错误应给出明确报错，而不是抛 TypeError/AttributeError。"""
+
+    def test_accounts_null_is_empty(self):
+        assert _parse_accounts({"accounts": None}) == []
+
+    def test_pages_and_dns_null_defaults(self):
+        accts = _parse_accounts({"accounts": [{"name": "a", "pages": None, "dns": None}]})
+        assert accts[0].pages.project_name == ""
+        assert accts[0].dns.zone_id == ""
+
+    def test_env_null_is_empty(self):
+        assert _parse_env_vars({"env": None}) == []
+
+    def test_env_not_list_raises(self):
+        with pytest.raises(ValueError, match="env"):
+            _parse_env_vars({"env": {"K": "v"}})
+
+    def test_env_item_not_mapping_raises(self):
+        with pytest.raises(ValueError, match="env"):
+            _parse_env_vars({"env": ["oops"]})
+
+    def test_account_item_not_mapping_raises(self):
+        with pytest.raises(ValueError, match="accounts"):
+            _parse_accounts({"accounts": ["oops"]})
+
+    def test_invalid_project_type_raises(self):
+        with pytest.raises(ValueError, match="project_type"):
+            _parse_pages_config({"project_name": "p", "project_type": "Production"})
+
+    @pytest.mark.parametrize("value", ["production", "preview"])
+    def test_valid_project_type(self, value: str):
+        assert _parse_pages_config({"project_name": "p", "project_type": value}).project_type == value
+
+    def test_files_to_redeploy_null_defaults(self):
+        fr = _parse_files_to_redeploy({"files_to_redeploy": None})
+        assert fr.dir == "files-to-redeploy"
+
+    def test_top_level_list_raises(self, tmp_path: Path):
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text("- a\n- b\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="顶层"):
+            load_config(cfg_path)
