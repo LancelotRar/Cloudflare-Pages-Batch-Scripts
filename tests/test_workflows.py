@@ -10,6 +10,8 @@ import httpx
 from cf_pages_batch_scripts.models import Account, Config, DnsConfig, EnvVar, FilesToRedeploy, PagesConfig
 from cf_pages_batch_scripts.workflows import (
     DOWNLOAD_ATTEMPTS,
+    _run_wrangler,
+    _wrangler_error_hint,
     delete_workflow,
     deploy_project,
     prepare_source,
@@ -183,6 +185,46 @@ class TestPrepareSource:
 
         assert src is not None
         assert mock_get.call_args.kwargs.get("proxy") == "http://127.0.0.1:7890"
+
+
+class TestWranglerErrorHints:
+    """wrangler 的英文报错应转成中文处置提示。"""
+
+    def test_blocked_project_prints_chinese_hint(self, capsys):
+        stderr = (
+            "X [ERROR] A request to the Cloudflare API "
+            "(/accounts/x/pages/projects/p/deployments) failed.\n\n"
+            "  Your Pages project has been blocked. Contact abusereply@cloudflare.com. [code: 8000119]\n"
+        )
+        with (
+            patch("cf_pages_batch_scripts.workflows._find_wrangler", return_value="wrangler"),
+            patch(
+                "cf_pages_batch_scripts.workflows.subprocess.run",
+                return_value=Mock(returncode=1, stdout="", stderr=stderr),
+            ),
+        ):
+            ok = _run_wrangler(Path("src"), "p", "t", "aid", "重新部署")
+
+        assert ok is False
+        out = capsys.readouterr().out
+        assert "封禁" in out
+        assert "abusereply@cloudflare.com" in out
+
+    def test_auth_error_hint(self):
+        assert "认证失败" in (_wrangler_error_hint("Authentication error [code: 10000]") or "")
+
+    def test_invalid_token_hint(self):
+        assert "认证失败" in (_wrangler_error_hint("Invalid access token [code: 9109]") or "")
+
+    def test_permission_error_hint(self):
+        assert "权限不足" in (_wrangler_error_hint("Insufficient permissions to deploy") or "")
+
+    def test_network_error_hint(self):
+        assert "网络" in (_wrangler_error_hint("fetch failed: ECONNRESET") or "")
+
+    def test_unknown_error_has_no_hint(self):
+        """未识别的报错保持原样，不臆造处置建议。"""
+        assert _wrangler_error_hint("X [ERROR] some unexpected failure") is None
 
 
 class TestSetProjectConfig:

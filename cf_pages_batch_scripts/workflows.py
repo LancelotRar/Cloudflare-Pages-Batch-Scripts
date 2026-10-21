@@ -286,6 +286,35 @@ def _find_wrangler() -> str | None:
     return None
 
 
+def _wrangler_error_hint(output: str) -> str | None:
+    """把 wrangler 常见英文报错映射为中文处置提示；未识别的错误返回 None。"""
+    text = output.lower()
+
+    if "8000119" in text or "has been blocked" in text:
+        return (
+            "项目已被 Cloudflare 封禁（8000119），重试不会生效；"
+            "请邮件 abusereply@cloudflare.com 申诉，附账号 ID、项目名和 wrangler 日志路径"
+        )
+    if (
+        "authentication error" in text
+        or "invalid access token" in text
+        or "correct permissions for this operation" in text
+    ):
+        return (
+            "Cloudflare 认证失败（10000/9109）：token 可能无效、过期或与 account_id 不匹配；"
+            "请确认 token 归属的账号与 account_id 一致"
+        )
+    if "insufficient permissions" in text or "do not have permission" in text:
+        return "Cloudflare 权限不足：token 需具备 Pages 项目的编辑权限（Account → Cloudflare Pages → Edit）"
+    if any(
+        needle in text
+        for needle in ("fetch failed", "econnreset", "etimedout", "enotfound", "getaddrinfo")
+    ):
+        return "wrangler 访问 Cloudflare API 网络失败：请检查 HTTPS_PROXY / HTTP_PROXY 代理和网络连通性"
+
+    return None
+
+
 def _run_wrangler(source_dir: Path, project: str, token: str, account_id: str, step_label: str) -> bool:
     """Run `wrangler pages deploy` and return success status."""
     wrangler_exe = _find_wrangler()
@@ -319,6 +348,11 @@ def _run_wrangler(source_dir: Path, project: str, token: str, account_id: str, s
         output = (result.stdout or "") + (result.stderr or "")
         for line in output.splitlines():
             print(f"    {line}")
+
+        if result.returncode != 0:
+            hint = _wrangler_error_hint(output)
+            if hint:
+                print_error(f"  {hint}")
 
         return result.returncode == 0
     except subprocess.TimeoutExpired:
