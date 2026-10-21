@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import time
 import zipfile
 from pathlib import Path
 
@@ -18,6 +19,37 @@ from .ui import (
     select_accounts,
     wait_enter,
 )
+
+# 直连或代理线路会偶发 TLS 握手中断（OpenSSL UNEXPECTED_EOF_WHILE_READING），
+# 单次失败不应让整轮批量部署中止，故下载阶段做有限次重试。
+DOWNLOAD_ATTEMPTS = 4
+DOWNLOAD_RETRY_BACKOFF = (2, 4, 8)
+DOWNLOAD_TIMEOUT = httpx.Timeout(connect=20.0, read=300.0, write=30.0, pool=20.0)
+
+
+def _download(url: str, proxy: str) -> bytes:
+    """下载 URL 内容；仅对网络层瞬时错误重试，HTTP 状态错误直接抛出。"""
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            resp = httpx.get(
+                url,
+                timeout=DOWNLOAD_TIMEOUT,
+                follow_redirects=True,
+                proxy=proxy or None,
+                verify=shared_ssl_context(),
+            )
+            resp.raise_for_status()
+            return resp.content
+        except httpx.TransportError as exc:
+            if attempt >= DOWNLOAD_ATTEMPTS:
+                raise
+            wait = DOWNLOAD_RETRY_BACKOFF[attempt - 1]
+            print_warn(
+                f"下载失败（第 {attempt}/{DOWNLOAD_ATTEMPTS} 次）：{exc}，{wait}s 后重试 ..."
+            )
+            time.sleep(wait)
 
 
 def prepare_source(cfg: Config) -> Path | None:
@@ -43,17 +75,8 @@ def prepare_source(cfg: Config) -> Path | None:
     tmp_dir.mkdir(parents=True)
 
     try:
-        resp = httpx.get(
-            fr.download_url,
-            timeout=300,
-            follow_redirects=True,
-            proxy=cfg.proxy or None,
-            verify=shared_ssl_context(),
-        )
-        resp.raise_for_status()
-
         zip_path = tmp_dir / "source.zip"
-        zip_path.write_bytes(resp.content)
+        zip_path.write_bytes(_download(fr.download_url, cfg.proxy))
 
         # 基本完整性检查：ZIP 至少应有几百字节
         if zip_path.stat().st_size < 200:

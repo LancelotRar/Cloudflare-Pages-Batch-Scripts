@@ -9,6 +9,7 @@ import httpx
 
 from cf_pages_batch_scripts.models import Account, Config, DnsConfig, EnvVar, FilesToRedeploy, PagesConfig
 from cf_pages_batch_scripts.workflows import (
+    DOWNLOAD_ATTEMPTS,
     delete_workflow,
     deploy_project,
     prepare_source,
@@ -61,14 +62,100 @@ class TestPrepareSource:
             files_to_redeploy=FilesToRedeploy(dir=str(deploy_dir), download_url="https://example.com/src.zip")
         )
 
-        with patch(
-            "cf_pages_batch_scripts.workflows.httpx.get",
-            side_effect=httpx.ConnectError("boom"),
+        with (
+            patch(
+                "cf_pages_batch_scripts.workflows.httpx.get",
+                side_effect=httpx.ConnectError("boom"),
+            ),
+            patch("cf_pages_batch_scripts.workflows.time.sleep"),
         ):
             assert prepare_source(cfg) is None
 
         assert marker.exists()
         assert not (deploy_dir.parent / ".deploy.download.tmp").exists()
+
+    def test_retries_transient_tls_error_until_success(self, tmp_path: Path):
+        """线路偶发 TLS 握手中断（UNEXPECTED_EOF_WHILE_READING）应自动重试而非直接失败。"""
+        cfg = Config(
+            files_to_redeploy=FilesToRedeploy(
+                dir=str(tmp_path / "deploy"), download_url="https://example.com/src.zip"
+            )
+        )
+        tls_error = httpx.ConnectError(
+            "[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol"
+        )
+
+        class FakeResponse:
+            def __init__(self, content: bytes) -> None:
+                self.content = content
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with (
+            patch(
+                "cf_pages_batch_scripts.workflows.httpx.get",
+                side_effect=[tls_error, FakeResponse(self.make_zip_bytes())],
+            ) as mock_get,
+            patch("cf_pages_batch_scripts.workflows.time.sleep") as mock_sleep,
+        ):
+            src = prepare_source(cfg)
+
+        assert src is not None
+        assert (src / "index.js").exists()
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
+
+    def test_transient_errors_retry_up_to_limit(self, tmp_path: Path):
+        deploy_dir = tmp_path / "deploy"
+        prev = deploy_dir / "extracted" / "proj"
+        prev.mkdir(parents=True)
+        marker = prev / "keep.txt"
+        marker.write_text("old", encoding="utf-8")
+        cfg = Config(
+            files_to_redeploy=FilesToRedeploy(dir=str(deploy_dir), download_url="https://example.com/src.zip")
+        )
+
+        with (
+            patch(
+                "cf_pages_batch_scripts.workflows.httpx.get",
+                side_effect=httpx.ConnectTimeout("handshake timed out"),
+            ) as mock_get,
+            patch("cf_pages_batch_scripts.workflows.time.sleep"),
+        ):
+            assert prepare_source(cfg) is None
+
+        assert mock_get.call_count == DOWNLOAD_ATTEMPTS
+        assert marker.exists()
+        assert not (deploy_dir.parent / ".deploy.download.tmp").exists()
+
+    def test_http_status_error_is_not_retried(self, tmp_path: Path):
+        """4xx/5xx 是确定性失败，重试无意义，立即返回。"""
+        cfg = Config(
+            files_to_redeploy=FilesToRedeploy(
+                dir=str(tmp_path / "deploy"), download_url="https://example.com/missing.zip"
+            )
+        )
+        request = httpx.Request("GET", "https://example.com/missing.zip")
+        status_error = httpx.HTTPStatusError(
+            "404 Not Found", request=request, response=httpx.Response(404, request=request)
+        )
+
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                raise status_error
+
+        with (
+            patch(
+                "cf_pages_batch_scripts.workflows.httpx.get",
+                return_value=FakeResponse(),
+            ) as mock_get,
+            patch("cf_pages_batch_scripts.workflows.time.sleep") as mock_sleep,
+        ):
+            assert prepare_source(cfg) is None
+
+        assert mock_get.call_count == 1
+        mock_sleep.assert_not_called()
 
     def test_proxy_from_cfg_is_used_for_download(self, tmp_path: Path):
         """下载使用 cfg.proxy 作为代理。"""
