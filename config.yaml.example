@@ -2,6 +2,7 @@ Myenv: &Myenv [{name: UUID, type: plain_text, value: 550e8400-e28b-41d4-a716-446
 Mypageskvyes: &Mypageskvyes {kv_create: true, kv_binding: true, kv_binding_env: KV, project_type: production}
 Mypageskvno: &Mypageskvno {kv_create: false, kv_binding: false, project_type: production}
 MyDNS: &MyDNS {dns_token: cfat_0000000000000000000000000000000000000000, zone_id: 00000000000000000000000000000000, type: CNAME, proxied: false, ttl: auto}
+# dns.content 可省略：默认拼接 <pages.project_name>.pages.dev；仅当目标域名不同才需显式配置。
 
 # 可选：HTTP/S 代理，用于源码下载与 Cloudflare API 请求。
 # 留空或删除时信任环境变量代理（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY）。
@@ -24,7 +25,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-01.pages.dev
 
   - name: account-02
     enabled: true
@@ -38,7 +38,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-02.pages.dev
 
   - name: account-03
     enabled: true
@@ -51,7 +50,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-03.pages.dev
 
   - name: account-04
     enabled: true
@@ -64,7 +62,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-04.pages.dev
 
   - name: account-05
     enabled: true
@@ -77,7 +74,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-05.pages.dev
 
   - name: account-06
     enabled: true
@@ -90,7 +86,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-06.pages.dev
 
   - name: account-07
     enabled: true
@@ -103,7 +98,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-07.pages.dev
 
   - name: account-08
     enabled: true
@@ -116,7 +110,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-08.pages.dev
 
   - name: account-09
     enabled: true
@@ -129,7 +122,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-09.pages.dev
 
   - name: account-10
     enabled: true
@@ -142,7 +134,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-10.pages.dev
 
   - name: account-11
     enabled: true
@@ -155,7 +146,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-11.pages.dev
 
   - name: account-12
     enabled: true
@@ -168,4 +158,3 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-12.pages.dev

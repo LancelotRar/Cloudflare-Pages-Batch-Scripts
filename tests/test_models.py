@@ -116,6 +116,21 @@ class TestAccount:
         acct = Account(name="a", enabled=True, token="t", account_id="aid", pages=pc, dns=dns)
         assert acct.dns == dns
 
+    def test_dns_content_defaults_to_project_pages_dev(self):
+        pc = PagesConfig(project_name="my-project")
+        acct = Account(name="a", enabled=True, token="t", account_id="aid", pages=pc)
+        assert acct.dns_content == "my-project.pages.dev"
+
+    def test_dns_content_explicit_wins(self):
+        pc = PagesConfig(project_name="my-project")
+        dns = DnsConfig(zone_id="zone", content="custom.pages.dev")
+        acct = Account(name="a", enabled=True, token="t", account_id="aid", pages=pc, dns=dns)
+        assert acct.dns_content == "custom.pages.dev"
+
+    def test_dns_content_empty_without_project_name(self):
+        acct = Account(name="a", enabled=True, token="t", account_id="aid", pages=PagesConfig(project_name=""))
+        assert acct.dns_content == ""
+
     def test_token_repr_hidden(self):
         pc = PagesConfig(project_name="p")
         acct = Account(name="a", enabled=True, token="mysecret", account_id="aid", pages=pc)

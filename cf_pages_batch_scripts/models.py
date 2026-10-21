@@ -28,7 +28,7 @@ class DnsConfig:
     token: str = field(default="", repr=False)
     zone_id: str = ""
     record_type: str = "CNAME"
-    content: str = ""
+    content: str = ""  # 可选；为空时按 <pages.project_name>.pages.dev 拼接
     proxied: bool = False
     ttl: int = 1
 
@@ -42,6 +42,13 @@ class Account:
     account_id: str
     pages: PagesConfig
     dns: DnsConfig = field(default_factory=DnsConfig)
+
+    @property
+    def dns_content(self) -> str:
+        """DNS 记录目标值；未显式配置 dns.content 时按 Pages 默认域名拼接。"""
+        if self.dns.content:
+            return self.dns.content
+        return f"{self.pages.project_name}.pages.dev" if self.pages.project_name else ""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

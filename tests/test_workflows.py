@@ -400,6 +400,26 @@ class TestSyncDnsRecord:
             pages=PagesConfig(project_name="p", domain=domain), dns=dns,
         )
 
+    def test_derives_content_from_project_name(self):
+        """省略 dns.content 时按 <project_name>.pages.dev 拼接目标域名。"""
+        api = Mock()
+        api.list_dns_records.return_value = []
+        api.create_dns_record.return_value = {"success": True}
+
+        assert sync_dns_record(api, self.make_account(DnsConfig(zone_id="zone"))) is True
+        api.list_dns_records.assert_called_once_with("zone", "p.pages.dev")
+        api.create_dns_record.assert_called_once_with("zone", {
+            "type": "CNAME", "name": "app.example.com", "content": "p.pages.dev", "proxied": False, "ttl": 1,
+        })
+
+    def test_explicit_content_overrides_derived(self):
+        api = Mock()
+        api.list_dns_records.return_value = []
+        api.create_dns_record.return_value = {"success": True}
+
+        assert sync_dns_record(api, self.make_account(DnsConfig(zone_id="zone", content="custom.pages.dev"))) is True
+        api.list_dns_records.assert_called_once_with("zone", "custom.pages.dev")
+
     def test_creates_missing_record(self):
         api = Mock()
         api.list_dns_records.return_value = []
@@ -460,6 +480,23 @@ class TestDeployProjectDnsResult:
             name="a", enabled=True, token="t", account_id="aid",
             pages=PagesConfig(project_name="p", domain="app.example.com"), dns=dns,
         )
+
+    @patch("cf_pages_batch_scripts.workflows.sync_dns_record", return_value=True)
+    @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
+    def test_dns_sync_runs_when_content_omitted(self, run_wrangler: Mock, sync_dns: Mock):
+        """只配 zone_id、不写 content 时仍应同步 DNS，目标域名自动拼接。"""
+        account = Account(
+            name="a", enabled=True, token="t", account_id="aid",
+            pages=PagesConfig(project_name="p", domain="app.example.com"),
+            dns=DnsConfig(token="dns-token", zone_id="zone"),
+        )
+        api = Mock()
+        api.create_project.return_value = {"success": True}
+        api.list_domains.return_value = []
+        api.add_domain.return_value = {"success": True}
+
+        assert deploy_project(api, account, Path("source")) is True
+        sync_dns.assert_called_once()
 
     @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
     def test_dns_failure_fails_account_after_deployment(self, run_wrangler: Mock):

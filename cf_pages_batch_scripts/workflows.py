@@ -191,14 +191,18 @@ def sync_project_domain(api: CfApiClient, project: str, target_domain: str) -> b
 
 
 def sync_dns_record(api: CfApiClient, account: Account) -> bool:
-    """Create or update the configured DNS record. 记录名取 pages.domain。"""
+    """Create or update the configured DNS record.
+
+    记录名取 pages.domain，目标值默认由 <project_name>.pages.dev 拼接。
+    """
     dns = account.dns
     domain = account.pages.domain
-    if not dns.zone_id or not domain or not dns.content:
+    content = account.dns_content
+    if not dns.zone_id or not domain or not content:
         return True
 
-    print_info(f"  正在按内容查询 DNS 记录 '{dns.content}' ...")
-    records = api.list_dns_records(dns.zone_id, dns.content)
+    print_info(f"  正在按内容查询 DNS 记录 '{content}' ...")
+    records = api.list_dns_records(dns.zone_id, content)
     if records is None:
         error = api.last_error
         print_error(f"  查询 DNS 记录失败：{error}" if error else "  查询 DNS 记录失败")
@@ -207,7 +211,7 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
     matches = [
         record
         for record in records
-        if record.get("content") == dns.content
+        if record.get("content") == content
     ]
 
     if len(matches) > 1:
@@ -226,7 +230,7 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
     payload = {
         "type": dns.record_type,
         "name": domain,
-        "content": dns.content,
+        "content": content,
         "proxied": dns.proxied,
         "ttl": dns.ttl,
     }
@@ -236,7 +240,7 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
         if not result or not result.get("success"):
             print_error(f"  创建 DNS 记录失败：{domain}")
             return False
-        print_ok(f"  DNS 记录已创建：{domain} -> {dns.content}")
+        print_ok(f"  DNS 记录已创建：{domain} -> {content}")
         return True
 
     current = matches[0]
@@ -259,7 +263,7 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
     if not result or not result.get("success"):
         print_error(f"  修改 DNS 记录失败：{domain}")
         return False
-    print_ok(f"  DNS 记录已修改：{domain} -> {dns.content}")
+    print_ok(f"  DNS 记录已修改：{domain} -> {content}")
     return True
 
 
@@ -428,7 +432,7 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: 
 
     # DNS 在项目部署后执行，但仍属于该账号的声明配置
     try:
-        dns_configured = bool(account.dns.zone_id and account.pages.domain and account.dns.content)
+        dns_configured = bool(account.dns.zone_id and account.pages.domain and account.dns_content)
         if not dns_configured:
             dns_synced = True
         elif not account.dns.token:

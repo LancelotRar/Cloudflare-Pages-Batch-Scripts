@@ -169,6 +169,7 @@ Myenv: &Myenv [{name: UUID, type: plain_text, value: 550e8400-e28b-41d4-a716-446
 Mypageskvyes: &Mypageskvyes {kv_create: true, kv_binding: true, kv_binding_env: KV, project_type: production}
 Mypageskvno: &Mypageskvno {kv_create: false, kv_binding: false, project_type: production}
 MyDNS: &MyDNS {dns_token: cfat_0000000000000000000000000000000000000000, zone_id: 00000000000000000000000000000000, type: CNAME, proxied: false, ttl: auto}
+# dns.content 可省略：默认拼接 <pages.project_name>.pages.dev。
 
 # 可选：HTTP/S 代理，用于源码下载与 Cloudflare API 请求。
 # 留空或删除时信任环境变量代理（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY）。
@@ -191,7 +192,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-01.pages.dev
 
   - name: account-02
     enabled: false
@@ -205,7 +205,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-02.pages.dev
 
   - name: account-03
     enabled: true
@@ -218,7 +217,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-03.pages.dev
 
   - name: account-04
     enabled: true
@@ -231,7 +229,6 @@ accounts:
       env: *Myenv
     dns:
       <<: *MyDNS
-      content: my-project-04.pages.dev
 
 ```
 
@@ -259,7 +256,7 @@ accounts:
 | `accounts[].dns` | `zone_id` | 托管目标域名账户中的 Zone ID，与当前 Pages 账户的 `account_id` 无关 |
 | | `dns_token` | 托管目标域名账户的独立 API Token，需对目标 Zone 具有 `DNS Write` 权限；不会使用当前 Pages 账户的 `token` |
 | | `type` | DNS 记录类型，默认 `CNAME` |
-| | `content` | DNS 记录目标值（记录名取 `pages.domain`，不再单独配置） |
+| | `content` | 可选，DNS 记录目标值；省略时自动拼接 `<project_name>.pages.dev`（记录名取 `pages.domain`） |
 | | `proxied` | 是否启用 Cloudflare 代理 |
 | | `ttl` | TTL 秒数；`auto` 表示自动（API 值 `1`） |
 
@@ -287,7 +284,7 @@ accounts:
 
 非空 `pages.env` 是受管理环境的完整白名单，脚本会添加或修改目标变量，并删除未声明的多余变量。`kv_create` 是 KV 操作总开关：为 `false` 时完全不执行 KV 操作（不查询、不创建、不改绑定，删除流程同样跳过 KV）；为 `true` 时要求 `kv_namespace`、`kv_binding: true`、`kv_binding_env` 配置完整（缺失则该账号报错跳过），随后确保命名空间存在（查询优先、缺失才创建）并将项目 KV 绑定严格收敛为唯一目标绑定。环境变量为空或 `domain` 为空时，对应配置不进行任何操作。
 
-配置完整的 `dns` 时，脚本使用域名托管账户的 `dns_token` 和 `zone_id` 建立独立 DNS API 请求，不使用 Pages 项目账户的 `token` 或 `account_id`。随后通过 Cloudflare API 的 `content.exact` 查询参数精确匹配 DNS 记录。找到记录后会将其名称、类型、代理状态和 TTL 修改为声明配置；记录不存在时创建，重复内容的记录会收敛为一条。DNS 查询、创建或修改失败会显示 Cloudflare API 错误详情并使当前账号失败，但不会影响后续账号继续部署。
+`dns.zone_id`、`dns.dns_token` 与 `pages.domain` 均非空时，脚本使用域名托管账户的 `dns_token` 和 `zone_id` 建立独立 DNS API 请求，不使用 Pages 项目账户的 `token` 或 `account_id`。DNS 记录目标值默认由 `pages.project_name` 拼接为 `<project_name>.pages.dev`，只有目标域名不同时才需要显式写 `content`。随后通过 Cloudflare API 的 `content.exact` 查询参数精确匹配 DNS 记录。找到记录后会将其名称、类型、代理状态和 TTL 修改为声明配置；记录不存在时创建，重复内容的记录会收敛为一条。DNS 查询、创建或修改失败会显示 Cloudflare API 错误详情并使当前账号失败，但不会影响后续账号继续部署。
 
 ### 批量删除
 
