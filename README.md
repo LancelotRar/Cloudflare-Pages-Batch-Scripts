@@ -5,8 +5,7 @@
 ### 多账号 Cloudflare Pages 批量部署/删除工具。从 ZIP 下载源码 → 创建 Pages 项目 → 配置环境变量 + KV 绑定 + 自定义域名 → 同步 DNS 记录 → wrangler 一次部署生效，全流程自动化。支持通过 HTTP/S 代理（`proxy` 配置）下载源码与请求 Cloudflare API。
 
 <img src="https://img.shields.io/badge/python-3.10+-blue?logo=python" alt="Python">
-<img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-
+<img src="https://img.shields.io/badge/license-MIT-green" alt="License"><br>
 <img src="https://count.getloli.com/@:cpbs?theme=booru-koe&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto">
 
 ## 部署界面
