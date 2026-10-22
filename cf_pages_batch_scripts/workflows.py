@@ -342,6 +342,9 @@ def _run_wrangler(source_dir: Path, project: str, token: str, account_id: str, s
                 project,
                 "--branch",
                 "main",
+                # 仓库有未提交改动时不再打印 dirty 警告；也避免 wrangler
+                # 把新静态项目自动委派成 Worker
+                "--commit-dirty=true",
             ],
             capture_output=True,
             encoding="utf-8",
@@ -386,15 +389,8 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: 
             return False
         print_ok("  项目已存在，跳过创建")
 
-    # ========== 第二步：上传部署 ==========
-    print_info("  [2/4] 上传部署 ...")
-    if not _run_wrangler(source_dir, project, account.token, account.account_id, "上传部署"):
-        print_error("  上传部署失败")
-        return False
-    print_ok("  上传部署完成")
-
-    # ========== 第三步：配置项目 ==========
-    print_info("  [3/4] 配置项目 ...")
+    # ========== 第二步：配置项目 ==========
+    print_info("  [2/4] 配置项目（环境变量 / KV 绑定 / 自定义域名）...")
 
     # KV 总开关：kv_create=false 时不进行任何 KV 操作；
     # true 时要求绑定配置完整，命名空间查询优先、缺失时创建（幂等）
@@ -423,14 +419,8 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: 
     if account.pages.domain and not sync_project_domain(api, project, account.pages.domain):
         return False
 
-    # ========== 第四步：重新部署 ==========
-    print_info("  [4/4] 重新部署使配置生效 ...")
-    if not _run_wrangler(source_dir, project, account.token, account.account_id, "重新部署"):
-        print_error("  重新部署失败")
-        return False
-    print_ok(f"  ✅ 项目 '{project}' 已完全部署并配置完成")
-
-    # DNS 在项目部署后执行，但仍属于该账号的声明配置
+    # ========== 第三步：同步 DNS ==========
+    print_info("  [3/4] 同步 DNS 记录 ...")
     try:
         dns_configured = bool(account.dns.zone_id and account.pages.domain and account.dns_content)
         if not dns_configured:
@@ -447,6 +437,15 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: 
     if not dns_synced:
         print_error(f"  DNS 同步失败，账号 '{account.name}' 配置未完全收敛")
         return False
+
+    # ========== 第四步：部署（仅一次） ==========
+    # Pages 的项目配置在下一次部署时注入，因此环境变量 / KV 绑定 / 域名必须全部
+    # 在部署之前收敛，一次部署即可生效，不再依赖“配置后重新部署”。
+    print_info("  [4/4] 上传部署（本次部署即携带上述配置）...")
+    if not _run_wrangler(source_dir, project, account.token, account.account_id, "上传部署"):
+        print_error("  上传部署失败")
+        return False
+    print_ok(f"  ✅ 项目 '{project}' 已一次部署完成，配置随本次部署生效")
     return True
 
 
@@ -471,10 +470,9 @@ def deploy_workflow(cfg: Config) -> None:
     print_header("部署项目")
     print_info("将对每个账号依次执行：")
     print_info("  1. 创建项目（通过 CF API）")
-    print_info("  2. 部署源码：wrangler pages deploy")
-    print_info("  3. 配置项目：KV 命名空间 → 环境变量 + KV 绑定 → 自定义域名")
-    print_info("  4. 重新部署使配置生效")
-    print_info("  5. 同步 DNS 记录（失败时当前账号标记失败）")
+    print_info("  2. 配置项目：KV 命名空间 → 环境变量 + KV 绑定 → 自定义域名")
+    print_info("  3. 同步 DNS 记录（失败时当前账号标记失败）")
+    print_info("  4. 部署源码：wrangler pages deploy（单次部署即携带上述配置）")
     print()
 
     print_info(">> 正在准备源码文件 ...")
@@ -503,8 +501,164 @@ def deploy_workflow(cfg: Config) -> None:
     wait_enter()
 
 
+def _collect_account_resources(api: CfApiClient, account: Account, proxy: str = "") -> dict | None:
+    """实时查询账号下全部可删除资源；任一查询失败返回 None。
+
+    返回 {"projects": [{"name", "domains"}], "kv": [...], "dns": [...], "dns_skipped": int}。
+    DNS 只收录「记录名 = 本账号项目已绑定域名」且「记录值 = 该项目 .pages.dev」的 CNAME，
+    其余记录计入 dns_skipped 并保留，避免误删同 Zone 内其他账号或业务的数据。
+    """
+    projects = api.list_projects()
+    if projects is None:
+        print_error(f"  查询账号下全部 Pages 项目失败：{api.last_error or '未知原因'}")
+        return None
+
+    entries: list[dict] = []
+    for project in projects:
+        name = project.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        domains = api.list_domains(name)
+        if domains is None:
+            print_error(f"  查询项目 '{name}' 的全部自定义域失败：{api.last_error or '未知原因'}")
+            return None
+        entries.append({
+            "name": name,
+            "domains": [
+                d["name"] for d in domains
+                if isinstance(d.get("name"), str) and d["name"]
+            ],
+        })
+
+    namespaces = api.list_kv_namespaces()
+    if namespaces is None:
+        print_error(f"  查询账号下全部 KV 命名空间失败：{api.last_error or '未知原因'}")
+        return None
+    kv = [ns for ns in namespaces if isinstance(ns.get("id"), str) and ns["id"]]
+
+    dns_records: list[dict] = []
+    dns_skipped = 0
+    if account.dns.zone_id:
+        if not account.dns.token:
+            print_error("  已配置 dns.zone_id 但缺少 dns_token，无法查询 DNS 记录")
+            return None
+        # DNS 使用托管域名账户的独立 token，不能用 Pages 账户的 token
+        with CfApiClient(account.account_id, account.dns.token, proxy=proxy) as dns_api:
+            records = dns_api.list_zone_dns_records(account.dns.zone_id)
+        if records is None:
+            print_error(f"  查询 Zone 内全部 DNS 记录失败：{dns_api.last_error or '未知原因'}")
+            return None
+        # 只清理「记录名 = 本账号项目已绑定的自定义域」且「记录值 = 该项目 .pages.dev」
+        # 的 CNAME。Zone 可能被多个账号共享，只按 content 匹配会误删其他账号的记录。
+        targets = {
+            (domain.lower().rstrip("."), f"{project['name']}.pages.dev".lower())
+            for project in entries
+            for domain in project["domains"]
+        }
+        for record in records:
+            if not isinstance(record.get("id"), str) or not record["id"]:
+                continue
+            key = (
+                str(record.get("name", "")).lower().rstrip("."),
+                str(record.get("content", "")).lower(),
+            )
+            if str(record.get("type", "")).upper() == "CNAME" and key in targets:
+                dns_records.append(record)
+            else:
+                dns_skipped += 1
+    else:
+        print_warn("  未配置 dns.zone_id，跳过 DNS 记录清理")
+
+    return {"projects": entries, "kv": kv, "dns": dns_records, "dns_skipped": dns_skipped}
+
+
+def _print_account_plan(account: Account, plan: dict) -> None:
+    """打印单个账号的待删除清单，并标注非配置文件中的资源。"""
+    domain_count = sum(len(project["domains"]) for project in plan["projects"])
+    configured_project = account.pages.project_name
+    configured_kv = account.pages.kv_namespace
+    extra_projects = [p["name"] for p in plan["projects"] if p["name"] != configured_project]
+    extra_kv = [ns for ns in plan["kv"] if ns.get("title") != configured_kv]
+
+    print_info(
+        f"  {account.name}：全部 Pages 项目 {len(plan['projects'])} 个 / "
+        f"全部自定义域 {domain_count} 个 / 全部 KV 命名空间 {len(plan['kv'])} 个 / "
+        f"本账号 DNS 记录 {len(plan['dns'])} 条"
+    )
+    if extra_projects:
+        print_warn(
+            f"    其中 {len(extra_projects)} 个非配置文件中的项目，将一并删除："
+            + "、".join(extra_projects)
+        )
+    for project in plan["projects"]:
+        domains = "、".join(project["domains"]) or "无"
+        tag = "" if project["name"] == configured_project else "  ← 非配置文件中的项目"
+        print_info(f"    - 项目 {project['name']}（自定义域：{domains}）{tag}")
+    if extra_kv:
+        print_warn(
+            f"    其中 {len(extra_kv)} 个非配置文件中的 KV 命名空间，将一并删除（可能被其他 Worker 使用）"
+        )
+    for ns in plan["kv"]:
+        tag = "" if ns.get("title") == configured_kv else "  ← 非配置文件中的 KV 命名空间"
+        print_info(f"    - KV 命名空间 {ns.get('title', ns['id'])}{tag}")
+    for record in plan["dns"]:
+        print_info(
+            f"    - DNS {record.get('type', '')} {record.get('name', '')}"
+            f" -> {record.get('content', '')}"
+        )
+    if plan.get("dns_skipped"):
+        print_info(
+            f"    Zone 内另有 {plan['dns_skipped']} 条记录不属于本账号项目，已保留"
+        )
+
+
+def _delete_account_resources(
+    api: CfApiClient, account: Account, plan: dict, proxy: str = ""
+) -> bool:
+    """删除清单内的全部资源；任一删除失败返回 False。"""
+    ok = True
+
+    for project in plan["projects"]:
+        name = project["name"]
+        for domain in project["domains"]:
+            result = api.delete_domain(name, domain)
+            if result and result.get("success"):
+                print_ok(f"    已删除自定义域 {domain}")
+            else:
+                print_error(f"    删除自定义域失败：{domain}（{api.last_error or '未知原因'}）")
+                ok = False
+        result = api.delete_project(name)
+        if result and result.get("success"):
+            print_ok(f"  已删除 Pages 项目 {name}")
+        else:
+            print_error(f"  删除 Pages 项目失败：{name}（{api.last_error or '未知原因'}）")
+            ok = False
+
+    for ns in plan["kv"]:
+        result = api.delete_kv_namespace(ns["id"])
+        if result and result.get("success"):
+            print_ok(f"  已删除 KV 命名空间 {ns.get('title', ns['id'])}")
+        else:
+            print_error(f"  删除 KV 命名空间失败：{ns.get('title', ns['id'])}（{api.last_error or '未知原因'}）")
+            ok = False
+
+    if plan["dns"]:
+        with CfApiClient(account.account_id, account.dns.token, proxy=proxy) as dns_api:
+            for record in plan["dns"]:
+                result = dns_api.delete_dns_record(account.dns.zone_id, record["id"])
+                if result and result.get("success"):
+                    print_ok(f"  已删除 DNS 记录 {record.get('name', '')} -> {record.get('content', '')}")
+                else:
+                    print_error(
+                        f"  删除 DNS 记录失败：{record.get('name', '')}（{dns_api.last_error or '未知原因'}）"
+                    )
+                    ok = False
+
+    return ok
+
+
 def delete_workflow(cfg: Config) -> None:
-    """完整删除流程入口"""
+    """完整删除流程入口：实时查询并删除账号下全部资源。"""
     accounts = get_enabled_accounts(cfg)
     if not accounts:
         print_error("没有已启用的账号（请检查 config.yaml 中的 enabled 字段）")
@@ -516,51 +670,63 @@ def delete_workflow(cfg: Config) -> None:
         return
 
     print_header("批量删除")
+    print_warn("删除范围：账号下全部资源，不限于配置文件中的那一个项目。")
+    print_warn("同一账号下的其他 Pages 项目、其他 Worker 使用的 KV 命名空间、")
+    print_warn("以及本账号项目已绑定自定义域对应的 DNS 记录都会被删除，且不可恢复。")
+    print_warn("若该账号还承载其他业务，请先在待删除清单中核对。")
+    print()
+    print_info("将实时查询并删除每个账号下的全部资源（不读取配置中的项目名 / 域名 / KV 名）：")
+    print_info("  1. 全部 Pages 项目（含其全部自定义域）")
+    print_info("  2. 全部 KV 命名空间")
+    print_info("  3. 本账号项目域名对应的 DNS 记录（需 dns.zone_id；其他记录保留）")
+    print()
 
+    # ========== 阶段一：实时查询 ==========
+    print_info(">> 正在实时查询账号下全部资源 ...")
+    plans: list[tuple[Account, dict]] = []
     failed: list[Account] = []
     for account in selected_accounts:
         try:
             with CfApiClient(account.account_id, account.token, proxy=cfg.proxy) as api:
-                print_header(f"--- {account.name} ---")
+                plan = _collect_account_resources(api, account, proxy=cfg.proxy)
+        except Exception as exc:
+            print_error(f"账号 '{account.name}' 查询异常：{exc}")
+            plan = None
+        if plan is None:
+            failed.append(account)
+        else:
+            plans.append((account, plan))
 
-                # 按配置删除自定义域名
-                domain = account.pages.domain
-                proj_name = account.pages.project_name
-                if domain:
-                    print_info(f"正在删除域名 '{domain}' ...")
-                    result = api.delete_domain(proj_name, domain)
-                    if result and result.get("success"):
-                        print_ok(f"    已删除域名 {domain}")
-                    else:
-                        print_warn(f"    域名删除可能失败：{domain}")
+    if not plans:
+        print_ok("========== 删除完成 ==========")
+        print_info(f"成功：0，失败：{len(failed)}")
+        for account in failed:
+            print_error(f"  失败账号：{account.name}")
+        wait_enter()
+        return
 
-                # 按配置删除项目
-                print_info(f"正在删除项目 '{proj_name}' ...")
-                result = api.delete_project(proj_name)
-                if result and result.get("success"):
-                    print_ok(f"  已删除 {proj_name}")
-                else:
-                    print_warn(f"  项目 '{proj_name}' 不存在或删除失败")
+    # ========== 阶段二：确认清单 ==========
+    print_header("待删除清单")
+    for account, plan in plans:
+        _print_account_plan(account, plan)
+    print()
+    print_warn("以上资源将被永久删除，无法恢复。")
+    try:
+        answer = input("确认删除账号下全部资源？输入 yes 继续：").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if answer != "yes":
+        print_warn("已取消，未删除任何资源")
+        wait_enter()
+        return
 
-                # 按配置删除 KV 命名空间（受 kv_create 总开关门控；需查 ID，唯一一次 CF 查询）
-                kv_name = account.pages.kv_namespace if account.pages.kv_create else ""
-                if kv_name:
-                    namespaces = api.list_kv_namespaces()
-                    if namespaces is None:
-                        print_warn(f"  查询 KV 命名空间失败，跳过清理：{api.last_error or '未知原因'}")
-                    else:
-                        for ns in namespaces:
-                            if ns.get("title") == kv_name:
-                                ns_id = ns.get("id", "")
-                                print_info(f"正在删除 KV 命名空间 '{kv_name}' ...")
-                                result = api.delete_kv_namespace(ns_id)
-                                if result and result.get("success"):
-                                    print_ok(f"  已删除 {kv_name}")
-                                else:
-                                    print_error(f"  失败：{kv_name}")
-                                break
-                        else:
-                            print_info(f"  KV 命名空间 '{kv_name}' 不存在，跳过")
+    # ========== 阶段三：执行删除 ==========
+    for account, plan in plans:
+        print_header(f"--- {account.name} ---")
+        try:
+            with CfApiClient(account.account_id, account.token, proxy=cfg.proxy) as api:
+                if not _delete_account_resources(api, account, plan, proxy=cfg.proxy):
+                    failed.append(account)
         except Exception as exc:
             print_error(f"账号 '{account.name}' 执行异常：{exc}")
             failed.append(account)

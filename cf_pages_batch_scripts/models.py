@@ -53,7 +53,7 @@ class Account:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FilesToRedeploy:
-    """全局配置：重新部署所需文件"""
+    """全局配置：部署所需源码"""
     dir: str = "files-to-redeploy"
     download_url: str = ""
 

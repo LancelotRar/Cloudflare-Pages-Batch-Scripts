@@ -114,6 +114,29 @@ class CfApiClient:
                 return results
             page += 1
 
+    def list_projects(self) -> list[dict] | None:
+        """列出账号下全部 Pages 项目（自动翻页）。
+
+        Pages 项目的 per_page 上限是 10，超过会返回 8000024，
+        因此不能复用 _paginated_get 的 per_page=50。
+        """
+        results: list[dict] = []
+        page = 1
+        while True:
+            url = self._add_query_param(
+                self._add_query_param("/pages/projects", "page", page), "per_page", 10
+            )
+            data = self._request("GET", url)
+            if data is None or not data.get("success"):
+                if data is not None and not self.last_error:
+                    self.last_error = self._format_api_errors(200, data)
+                return None
+            results.extend(data.get("result") or [])
+            result_info = data.get("result_info", {}) or {}
+            if page >= result_info.get("total_pages", 1):
+                return results
+            page += 1
+
     def get_project(self, name: str) -> dict | None:
         data = self._request("GET", f"/pages/projects/{quote(name, safe='')}")
         if data and data.get("success"):
@@ -160,6 +183,24 @@ class CfApiClient:
         page = 1
         while True:
             query = urlencode({"page": page, "per_page": 100, "content.exact": content})
+            url = f"{CF_API_BASE}/zones/{zone_id}/dns_records?{query}"
+            data = self._request_url("GET", url)
+            if not data or not data.get("success"):
+                if data and not self.last_error:
+                    self.last_error = self._format_api_errors(200, data)
+                return None
+            results.extend(data.get("result", []))
+            total_pages = data.get("result_info", {}).get("total_pages", 1)
+            if page >= total_pages:
+                return results
+            page += 1
+
+    def list_zone_dns_records(self, zone_id: str) -> list[dict] | None:
+        """列出 Zone 内全部 DNS 记录（不带 content 过滤，自动翻页）。"""
+        results: list[dict] = []
+        page = 1
+        while True:
+            query = urlencode({"page": page, "per_page": 100})
             url = f"{CF_API_BASE}/zones/{zone_id}/dns_records?{query}"
             data = self._request_url("GET", url)
             if not data or not data.get("success"):
