@@ -403,6 +403,22 @@ class TestSetProjectConfig:
         assert "EMPTY = " not in out
         assert "共 1 个" in out
 
+    def test_all_values_empty_says_nothing_to_write(self, capsys):
+        """变量存在但值全为空时，措辞应是「没有可写入的」而非「未配置」。"""
+        api = Mock()
+        api.get_project.return_value = {"deployment_configs": {"production": {"env_vars": {}}}}
+        api.patch_project_config.return_value = True
+        pages = PagesConfig(
+            project_name="p",
+            env=[EnvVar(name="EMPTY", var_type="plain_text", value="")],
+        )
+        account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
+
+        assert set_project_config(api, account) is True
+        out = capsys.readouterr().out
+        assert "没有可写入的环境变量，跳过" in out
+        assert "未配置环境变量" not in out
+
     def test_kv_binding_detail_printed(self, capsys):
         api = Mock()
         api.get_project.return_value = {"deployment_configs": {"production": {"kv_namespaces": {}}}}

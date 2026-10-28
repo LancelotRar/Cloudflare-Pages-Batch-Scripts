@@ -140,7 +140,7 @@ def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = N
                 if ev.name and ev.value:
                     print_info(f"      - {_format_env_var(ev)}")
         else:
-            print_info("    未配置环境变量，跳过")
+            print_info("    没有可写入的环境变量，跳过")
         empty_names = [ev.name for ev in account.pages.env if ev.name and not ev.value]
         if empty_names:
             print_warn(f"    变量 {'、'.join(empty_names)} 的值为空，不会写入（同名已有变量会被移除）")
