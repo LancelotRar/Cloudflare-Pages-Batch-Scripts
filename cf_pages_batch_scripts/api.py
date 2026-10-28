@@ -123,9 +123,7 @@ class CfApiClient:
         results: list[dict] = []
         page = 1
         while True:
-            url = self._add_query_param(
-                self._add_query_param("/pages/projects", "page", page), "per_page", 10
-            )
+            url = self._add_query_param(self._add_query_param("/pages/projects", "page", page), "per_page", 10)
             data = self._request("GET", url)
             if data is None or not data.get("success"):
                 if data is not None and not self.last_error:
@@ -145,25 +143,37 @@ class CfApiClient:
         return None
 
     def create_project(self, name: str, branch: str = "main") -> dict | None:
-        return self._request("POST", "/pages/projects", {
-            "name": name,
-            "production_branch": branch,
-        })
+        return self._request(
+            "POST",
+            "/pages/projects",
+            {
+                "name": name,
+                "production_branch": branch,
+            },
+        )
 
     def delete_project(self, name: str) -> dict | None:
         return self._request("DELETE", f"/pages/projects/{quote(name, safe='')}")
 
     def patch_project_config(self, name: str, deployment_configs: dict) -> bool:
-        data = self._request("PATCH", f"/pages/projects/{quote(name, safe='')}", {
-            "deployment_configs": deployment_configs,
-        })
+        data = self._request(
+            "PATCH",
+            f"/pages/projects/{quote(name, safe='')}",
+            {
+                "deployment_configs": deployment_configs,
+            },
+        )
         return data is not None and data.get("success", False)
 
     def add_domain(self, project_name: str, domain: str) -> dict | None:
         project_path = quote(project_name, safe="")
-        return self._request("POST", f"/pages/projects/{project_path}/domains", {
-            "name": domain,
-        })
+        return self._request(
+            "POST",
+            f"/pages/projects/{project_path}/domains",
+            {
+                "name": domain,
+            },
+        )
 
     def list_domains(self, project_name: str) -> list[dict] | None:
         project_path = quote(project_name, safe="")
@@ -229,9 +239,13 @@ class CfApiClient:
         return self._paginated_get("/storage/kv/namespaces")
 
     def create_kv_namespace(self, title: str) -> dict | None:
-        return self._request("POST", "/storage/kv/namespaces", {
-            "title": title,
-        })
+        return self._request(
+            "POST",
+            "/storage/kv/namespaces",
+            {
+                "title": title,
+            },
+        )
 
     def delete_kv_namespace(self, namespace_id: str) -> dict | None:
         return self._request("DELETE", f"/storage/kv/namespaces/{namespace_id}")

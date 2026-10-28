@@ -60,9 +60,9 @@ class TestParseFilesToRedeploy:
         assert fr.download_url == ""
 
     def test_full(self):
-        fr = _parse_files_to_redeploy({
-            "files_to_redeploy": {"dir": "my-dir", "download_url": "https://example.com/x.zip"}
-        })
+        fr = _parse_files_to_redeploy(
+            {"files_to_redeploy": {"dir": "my-dir", "download_url": "https://example.com/x.zip"}}
+        )
         assert fr.dir == "my-dir"
         assert fr.download_url == "https://example.com/x.zip"
 
@@ -83,10 +83,12 @@ class TestParseEnvVars:
         assert envs[0].value == "v1"
 
     def test_multiple(self):
-        raw = {"env": [
-            {"name": "K1", "type": "plain_text", "value": "v1"},
-            {"name": "K2", "type": "secret_text", "value": "s2"},
-        ]}
+        raw = {
+            "env": [
+                {"name": "K1", "type": "plain_text", "value": "v1"},
+                {"name": "K2", "type": "secret_text", "value": "s2"},
+            ]
+        }
         envs = _parse_env_vars(raw)
         assert len(envs) == 2
         assert envs[0].var_type == "plain_text"
@@ -100,12 +102,17 @@ class TestParsePagesConfig:
         assert pc.project_type == "production"
 
     def test_full(self):
-        pc = _parse_pages_config({
-            "project_name": "p", "domain": "d.com",
-            "kv_create": True, "kv_namespace": "ns",
-            "kv_binding": True, "kv_binding_env": "KV",
-            "project_type": "preview",
-        })
+        pc = _parse_pages_config(
+            {
+                "project_name": "p",
+                "domain": "d.com",
+                "kv_create": True,
+                "kv_namespace": "ns",
+                "kv_binding": True,
+                "kv_binding_env": "KV",
+                "project_type": "preview",
+            }
+        )
         assert pc.domain == "d.com"
         assert pc.kv_create is True
         assert pc.project_type == "preview"
@@ -117,14 +124,16 @@ class TestParsePagesConfig:
 
 class TestParseDnsConfig:
     def test_parses_auto_ttl(self):
-        dns = _parse_dns_config({
-            "dns_token": "dns-secret",
-            "zone_id": "zone",
-            "type": "CNAME",
-            "content": "target.pages.dev",
-            "proxied": False,
-            "ttl": "auto",
-        })
+        dns = _parse_dns_config(
+            {
+                "dns_token": "dns-secret",
+                "zone_id": "zone",
+                "type": "CNAME",
+                "content": "target.pages.dev",
+                "proxied": False,
+                "ttl": "auto",
+            }
+        )
         assert dns == DnsConfig(
             token="dns-secret",
             zone_id="zone",
@@ -152,10 +161,17 @@ class TestParseAccounts:
         assert _parse_accounts({}) == []
 
     def test_one_account(self):
-        raw = {"accounts": [{
-            "name": "acc1", "enabled": True, "token": "cfat_xxx",
-            "account_id": "aid1", "pages": {"project_name": "p1"},
-        }]}
+        raw = {
+            "accounts": [
+                {
+                    "name": "acc1",
+                    "enabled": True,
+                    "token": "cfat_xxx",
+                    "account_id": "aid1",
+                    "pages": {"project_name": "p1"},
+                }
+            ]
+        }
         accts = _parse_accounts(raw)
         assert len(accts) == 1
         assert accts[0].name == "acc1"
@@ -194,10 +210,15 @@ class TestLoadConfig:
         cfg_path = tmp_path / "config.yaml"
         data = {
             "files_to_redeploy": {"dir": "d", "download_url": "https://u"},
-            "accounts": [{
-                "name": "a", "enabled": True, "token": "tok", "account_id": "aid",
-                "pages": {"project_name": "p"},
-            }],
+            "accounts": [
+                {
+                    "name": "a",
+                    "enabled": True,
+                    "token": "tok",
+                    "account_id": "aid",
+                    "pages": {"project_name": "p"},
+                }
+            ],
         }
         cfg_path.write_text(yaml.dump(data), encoding="utf-8")
 

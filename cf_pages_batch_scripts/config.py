@@ -99,14 +99,16 @@ def _parse_accounts(raw: dict | None) -> list[Account]:
     for index, raw_acct in enumerate(raw_accounts, start=1):
         if not isinstance(raw_acct, dict):
             raise ValueError(f"accounts 第 {index} 项必须是映射，当前为 {raw_acct!r}")
-        accounts.append(Account(
-            name=_get_str(raw_acct, "name"),
-            enabled=_get_bool(raw_acct, "enabled"),
-            token=_get_str(raw_acct, "token"),
-            account_id=_get_str(raw_acct, "account_id"),
-            pages=_parse_pages_config(raw_acct.get("pages") or {}),
-            dns=_parse_dns_config(raw_acct.get("dns") or {}),
-        ))
+        accounts.append(
+            Account(
+                name=_get_str(raw_acct, "name"),
+                enabled=_get_bool(raw_acct, "enabled"),
+                token=_get_str(raw_acct, "token"),
+                account_id=_get_str(raw_acct, "account_id"),
+                pages=_parse_pages_config(raw_acct.get("pages") or {}),
+                dns=_parse_dns_config(raw_acct.get("dns") or {}),
+            )
+        )
     return accounts
 
 
@@ -130,7 +132,4 @@ def load_config(path: Path | None = None) -> Config:
 
 def get_enabled_accounts(cfg: Config) -> list[Account]:
     """返回已启用且配置完整的账号列表"""
-    return [
-        a for a in cfg.accounts
-        if a.enabled and a.token and a.account_id and a.pages.project_name
-    ]
+    return [a for a in cfg.accounts if a.enabled and a.token and a.account_id and a.pages.project_name]

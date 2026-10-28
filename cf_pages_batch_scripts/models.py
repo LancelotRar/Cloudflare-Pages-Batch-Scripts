@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True, slots=True, kw_only=True)
 class EnvVar:
     """环境变量，如 UUID/ADMIN 等"""
+
     name: str
     var_type: str  # plain_text 或 secret_text
     value: str
@@ -12,6 +13,7 @@ class EnvVar:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PagesConfig:
     """单个 Pages 项目的配置"""
+
     project_name: str
     domain: str = ""
     kv_create: bool = False
@@ -25,6 +27,7 @@ class PagesConfig:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DnsConfig:
     """单个 DNS 记录配置。记录名与 pages.domain 同源，不再单独配置。"""
+
     token: str = field(default="", repr=False)
     zone_id: str = ""
     record_type: str = "CNAME"
@@ -36,6 +39,7 @@ class DnsConfig:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Account:
     """一个 Cloudflare 账号下的 Pages 项目配置"""
+
     name: str
     enabled: bool
     token: str = field(repr=False)  # 敏感字段，不在 repr 中泄露
@@ -54,6 +58,7 @@ class Account:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FilesToRedeploy:
     """全局配置：部署所需源码"""
+
     dir: str = "files-to-redeploy"
     download_url: str = ""
 
@@ -61,6 +66,7 @@ class FilesToRedeploy:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Config:
     """顶层配置文件"""
+
     files_to_redeploy: FilesToRedeploy = field(default_factory=FilesToRedeploy)
     proxy: str = ""  # 可选代理，如 http://127.0.0.1:7890；为空时信任环境变量代理
     accounts: list[Account] = field(default_factory=list)

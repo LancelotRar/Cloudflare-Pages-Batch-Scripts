@@ -162,9 +162,7 @@ class TestAddQueryParam:
         assert result == "/path?existing=1&page=2"
 
     def test_multiple_calls(self):
-        result = CfApiClient._add_query_param(
-            CfApiClient._add_query_param("/path", "page", 1), "per_page", 50
-        )
+        result = CfApiClient._add_query_param(CfApiClient._add_query_param("/path", "page", 1), "per_page", 50)
         assert result == "/path?page=1&per_page=50"
 
 
