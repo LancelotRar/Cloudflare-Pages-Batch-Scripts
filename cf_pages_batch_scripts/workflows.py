@@ -6,10 +6,11 @@ import zipfile
 from pathlib import Path
 
 import httpx
+from rich.markup import escape
 
 from .api import CfApiClient, shared_ssl_context
 from .config import get_enabled_accounts
-from .models import Account, Config
+from .models import Account, Config, EnvVar
 from .ui import (
     print_error,
     print_header,
@@ -46,9 +47,7 @@ def _download(url: str, proxy: str) -> bytes:
             if attempt >= DOWNLOAD_ATTEMPTS:
                 raise
             wait = DOWNLOAD_RETRY_BACKOFF[attempt - 1]
-            print_warn(
-                f"下载失败（第 {attempt}/{DOWNLOAD_ATTEMPTS} 次）：{exc}，{wait}s 后重试 ..."
-            )
+            print_warn(f"下载失败（第 {attempt}/{DOWNLOAD_ATTEMPTS} 次）：{exc}，{wait}s 后重试 ...")
             time.sleep(wait)
 
 
@@ -106,6 +105,11 @@ def prepare_source(cfg: Config) -> Path | None:
     return src
 
 
+def _format_env_var(ev: EnvVar) -> str:
+    """环境变量单行展示：名称 = 值 [类型]。值可能含方括号，需转义以免被当作 Rich 标记。"""
+    return escape(f"{ev.name} = {ev.value} [{ev.var_type}]")
+
+
 def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = None) -> bool:
     """Converge managed environment variables and KV bindings."""
     manage_env = bool(account.pages.env)
@@ -124,35 +128,63 @@ def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = N
     dep_cfg: dict[str, dict] = {}
     managed_env_names = {ev.name for ev in account.pages.env if ev.name}
     desired_env_vars = {
-        ev.name: {"value": ev.value, "type": ev.var_type}
-        for ev in account.pages.env
-        if ev.name and ev.value
+        ev.name: {"value": ev.value, "type": ev.var_type} for ev in account.pages.env if ev.name and ev.value
     }
 
+    if manage_env:
+        if desired_env_vars:
+            print_info(
+                f"    环境变量（受管理白名单，共 {len(desired_env_vars)} 个）→ 目标环境：{'、'.join(target_envs)}"
+            )
+            for ev in account.pages.env:
+                if ev.name and ev.value:
+                    print_info(f"      - {_format_env_var(ev)}")
+        else:
+            print_info("    未配置环境变量，跳过")
+        empty_names = [ev.name for ev in account.pages.env if ev.name and not ev.value]
+        if empty_names:
+            print_warn(f"    变量 {'、'.join(empty_names)} 的值为空，不会写入（同名已有变量会被移除）")
+
+    if manage_kv and (not ns_id or not account.pages.kv_binding_env):
+        print_error("  KV 已启用，但命名空间 ID 或绑定名无效")
+        return False
+
+    removed_env_names: list[str] = []
     for target_env in target_envs:
         current = current_configs.get(target_env, {}) or {}
         cfg: dict = {}
         if manage_env:
             current_env_vars = current.get("env_vars", {}) or {}
+            for name in current_env_vars:
+                if name not in managed_env_names and name not in removed_env_names:
+                    removed_env_names.append(name)
             cfg["env_vars"] = {
                 **{name: None for name in current_env_vars if name not in managed_env_names},
                 **desired_env_vars,
             }
         if manage_kv:
-            if not ns_id or not account.pages.kv_binding_env:
-                print_error("  KV 已启用，但命名空间 ID 或绑定名无效")
-                return False
             current_kv = current.get("kv_namespaces", {}) or {}
-            desired_kv = {
-                account.pages.kv_binding_env: {"namespace_id": ns_id}
-            }
+            desired_kv = {account.pages.kv_binding_env: {"namespace_id": ns_id}}
             cfg["kv_namespaces"] = {
                 **{name: None for name in current_kv if name not in desired_kv},
                 **desired_kv,
             }
         dep_cfg[target_env] = cfg
 
-    return api.patch_project_config(account.pages.project_name, dep_cfg)
+    if removed_env_names:
+        print_warn(f"    将删除项目上未声明的变量：{'、'.join(removed_env_names)}")
+    if manage_kv:
+        print_info(f"    KV 绑定：{account.pages.kv_binding_env} -> {ns_id}")
+
+    ok = api.patch_project_config(account.pages.project_name, dep_cfg)
+    if ok:
+        summary: list[str] = []
+        if manage_env:
+            summary.append(f"环境变量 {len(desired_env_vars)} 个")
+        if manage_kv:
+            summary.append("KV 绑定 1 个")
+        print_ok(f"    项目配置已提交：{' / '.join(summary)}")
+    return ok
 
 
 def sync_project_domain(api: CfApiClient, project: str, target_domain: str) -> bool:
@@ -208,11 +240,7 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
         print_error(f"  查询 DNS 记录失败：{error}" if error else "  查询 DNS 记录失败")
         return False
 
-    matches = [
-        record
-        for record in records
-        if record.get("content") == content
-    ]
+    matches = [record for record in records if record.get("content") == content]
 
     if len(matches) > 1:
         keep = matches[0]
@@ -310,10 +338,7 @@ def _wrangler_error_hint(output: str) -> str | None:
         )
     if "insufficient permissions" in text or "do not have permission" in text:
         return "Cloudflare 权限不足：token 需具备 Pages 项目的编辑权限（Account → Cloudflare Pages → Edit）"
-    if any(
-        needle in text
-        for needle in ("fetch failed", "econnreset", "etimedout", "enotfound", "getaddrinfo")
-    ):
+    if any(needle in text for needle in ("fetch failed", "econnreset", "etimedout", "enotfound", "getaddrinfo")):
         return "wrangler 访问 Cloudflare API 网络失败：请检查 HTTPS_PROXY / HTTP_PROXY 代理和网络连通性"
 
     return None
@@ -404,15 +429,13 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: 
             return False
         ns_id, ns_created = api.ensure_kv_namespace(account.pages.kv_namespace)
         if not ns_id:
-            print_error(
-                f"  无法获取 KV 命名空间 ID：{account.pages.kv_namespace}（{api.last_error or '未知原因'}）"
-            )
+            print_error(f"  无法获取 KV 命名空间 ID：{account.pages.kv_namespace}（{api.last_error or '未知原因'}）")
             return False
         print_ok(f"  KV 命名空间 '{account.pages.kv_namespace}' {'已创建' if ns_created else '已存在'}")
 
     # 设置环境变量 + KV 绑定
     if not set_project_config(api, account, ns_id):
-        print_error("  环境变量或 KV 绑定配置失败")
+        print_error(f"  环境变量或 KV 绑定配置失败：{api.last_error or '未知原因'}")
         return False
 
     # 自定义域名
@@ -445,7 +468,13 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: 
     if not _run_wrangler(source_dir, project, account.token, account.account_id, "上传部署"):
         print_error("  上传部署失败")
         return False
-    print_ok(f"  ✅ 项目 '{project}' 已一次部署完成，配置随本次部署生效")
+    carried = [f"域名 {account.pages.domain or '未配置'}"]
+    env_count = sum(1 for ev in account.pages.env if ev.name and ev.value)
+    if env_count:
+        carried.append(f"环境变量 {env_count} 个")
+    if account.pages.kv_create and account.pages.kv_binding_env:
+        carried.append(f"KV 绑定 {account.pages.kv_binding_env}")
+    print_ok(f"  ✅ 项目 '{project}' 已一次部署完成，配置随本次部署生效：{' / '.join(carried)}")
     return True
 
 
@@ -522,13 +551,12 @@ def _collect_account_resources(api: CfApiClient, account: Account, proxy: str = 
         if domains is None:
             print_error(f"  查询项目 '{name}' 的全部自定义域失败：{api.last_error or '未知原因'}")
             return None
-        entries.append({
-            "name": name,
-            "domains": [
-                d["name"] for d in domains
-                if isinstance(d.get("name"), str) and d["name"]
-            ],
-        })
+        entries.append(
+            {
+                "name": name,
+                "domains": [d["name"] for d in domains if isinstance(d.get("name"), str) and d["name"]],
+            }
+        )
 
     namespaces = api.list_kv_namespaces()
     if namespaces is None:
@@ -586,35 +614,23 @@ def _print_account_plan(account: Account, plan: dict) -> None:
         f"本账号 DNS 记录 {len(plan['dns'])} 条"
     )
     if extra_projects:
-        print_warn(
-            f"    其中 {len(extra_projects)} 个非配置文件中的项目，将一并删除："
-            + "、".join(extra_projects)
-        )
+        print_warn(f"    其中 {len(extra_projects)} 个非配置文件中的项目，将一并删除：" + "、".join(extra_projects))
     for project in plan["projects"]:
         domains = "、".join(project["domains"]) or "无"
         tag = "" if project["name"] == configured_project else "  ← 非配置文件中的项目"
         print_info(f"    - 项目 {project['name']}（自定义域：{domains}）{tag}")
     if extra_kv:
-        print_warn(
-            f"    其中 {len(extra_kv)} 个非配置文件中的 KV 命名空间，将一并删除（可能被其他 Worker 使用）"
-        )
+        print_warn(f"    其中 {len(extra_kv)} 个非配置文件中的 KV 命名空间，将一并删除（可能被其他 Worker 使用）")
     for ns in plan["kv"]:
         tag = "" if ns.get("title") == configured_kv else "  ← 非配置文件中的 KV 命名空间"
         print_info(f"    - KV 命名空间 {ns.get('title', ns['id'])}{tag}")
     for record in plan["dns"]:
-        print_info(
-            f"    - DNS {record.get('type', '')} {record.get('name', '')}"
-            f" -> {record.get('content', '')}"
-        )
+        print_info(f"    - DNS {record.get('type', '')} {record.get('name', '')} -> {record.get('content', '')}")
     if plan.get("dns_skipped"):
-        print_info(
-            f"    Zone 内另有 {plan['dns_skipped']} 条记录不属于本账号项目，已保留"
-        )
+        print_info(f"    Zone 内另有 {plan['dns_skipped']} 条记录不属于本账号项目，已保留")
 
 
-def _delete_account_resources(
-    api: CfApiClient, account: Account, plan: dict, proxy: str = ""
-) -> bool:
+def _delete_account_resources(api: CfApiClient, account: Account, plan: dict, proxy: str = "") -> bool:
     """删除清单内的全部资源；任一删除失败返回 False。"""
     ok = True
 
@@ -649,9 +665,7 @@ def _delete_account_resources(
                 if result and result.get("success"):
                     print_ok(f"  已删除 DNS 记录 {record.get('name', '')} -> {record.get('content', '')}")
                 else:
-                    print_error(
-                        f"  删除 DNS 记录失败：{record.get('name', '')}（{dns_api.last_error or '未知原因'}）"
-                    )
+                    print_error(f"  删除 DNS 记录失败：{record.get('name', '')}（{dns_api.last_error or '未知原因'}）")
                     ok = False
 
     return ok

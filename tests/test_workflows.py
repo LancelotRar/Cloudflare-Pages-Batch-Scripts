@@ -32,9 +32,7 @@ class TestPrepareSource:
 
     def test_success_unwraps_single_top_dir(self, tmp_path: Path):
         deploy_dir = tmp_path / "deploy"
-        cfg = Config(
-            files_to_redeploy=FilesToRedeploy(dir=str(deploy_dir), download_url="https://example.com/src.zip")
-        )
+        cfg = Config(files_to_redeploy=FilesToRedeploy(dir=str(deploy_dir), download_url="https://example.com/src.zip"))
 
         class FakeResponse:
             def __init__(self, content: bytes) -> None:
@@ -60,9 +58,7 @@ class TestPrepareSource:
         prev.mkdir(parents=True)
         marker = prev / "keep.txt"
         marker.write_text("old", encoding="utf-8")
-        cfg = Config(
-            files_to_redeploy=FilesToRedeploy(dir=str(deploy_dir), download_url="https://example.com/src.zip")
-        )
+        cfg = Config(files_to_redeploy=FilesToRedeploy(dir=str(deploy_dir), download_url="https://example.com/src.zip"))
 
         with (
             patch(
@@ -79,13 +75,9 @@ class TestPrepareSource:
     def test_retries_transient_tls_error_until_success(self, tmp_path: Path):
         """线路偶发 TLS 握手中断（UNEXPECTED_EOF_WHILE_READING）应自动重试而非直接失败。"""
         cfg = Config(
-            files_to_redeploy=FilesToRedeploy(
-                dir=str(tmp_path / "deploy"), download_url="https://example.com/src.zip"
-            )
+            files_to_redeploy=FilesToRedeploy(dir=str(tmp_path / "deploy"), download_url="https://example.com/src.zip")
         )
-        tls_error = httpx.ConnectError(
-            "[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol"
-        )
+        tls_error = httpx.ConnectError("[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol")
 
         class FakeResponse:
             def __init__(self, content: bytes) -> None:
@@ -114,9 +106,7 @@ class TestPrepareSource:
         prev.mkdir(parents=True)
         marker = prev / "keep.txt"
         marker.write_text("old", encoding="utf-8")
-        cfg = Config(
-            files_to_redeploy=FilesToRedeploy(dir=str(deploy_dir), download_url="https://example.com/src.zip")
-        )
+        cfg = Config(files_to_redeploy=FilesToRedeploy(dir=str(deploy_dir), download_url="https://example.com/src.zip"))
 
         with (
             patch(
@@ -248,9 +238,7 @@ class TestWranglerErrorHints:
 class TestSetProjectConfig:
     def test_env_whitelist_deletes_extra_variables(self):
         api = Mock()
-        api.get_project.return_value = {
-            "deployment_configs": {"production": {"env_vars": {"KEEP": {}, "OLD": {}}}}
-        }
+        api.get_project.return_value = {"deployment_configs": {"production": {"env_vars": {"KEEP": {}, "OLD": {}}}}}
         api.patch_project_config.return_value = True
         pages = PagesConfig(
             project_name="p",
@@ -259,14 +247,17 @@ class TestSetProjectConfig:
         account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
 
         assert set_project_config(api, account) is True
-        api.patch_project_config.assert_called_once_with("p", {
-            "production": {
-                "env_vars": {
-                    "OLD": None,
-                    "KEEP": {"value": "new", "type": "plain_text"},
+        api.patch_project_config.assert_called_once_with(
+            "p",
+            {
+                "production": {
+                    "env_vars": {
+                        "OLD": None,
+                        "KEEP": {"value": "new", "type": "plain_text"},
+                    }
                 }
-            }
-        })
+            },
+        )
 
     def test_kv_create_off_does_not_touch_bindings(self):
         """kv_create=false 是总开关：即使配置了 kv_namespace 也完全不生成 kv_namespaces 补丁。"""
@@ -304,9 +295,9 @@ class TestSetProjectConfig:
         account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
 
         assert set_project_config(api, account, ns_id="ns-9") is True
-        api.patch_project_config.assert_called_once_with("p", {
-            "production": {"kv_namespaces": {"OLD": None, "KV": {"namespace_id": "ns-9"}}}
-        })
+        api.patch_project_config.assert_called_once_with(
+            "p", {"production": {"kv_namespaces": {"OLD": None, "KV": {"namespace_id": "ns-9"}}}}
+        )
 
     def test_null_env_vars_and_kv_namespaces_do_not_crash(self):
         """CF API 对新建项目返回 env_vars/kv_namespaces 为 null 而非 {}，不应触发迭代异常。"""
@@ -331,12 +322,15 @@ class TestSetProjectConfig:
         account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
 
         assert set_project_config(api, account, ns_id="nsid") is True
-        api.patch_project_config.assert_called_once_with("p", {
-            "production": {
-                "env_vars": {"KEEP": {"value": "v", "type": "plain_text"}},
-                "kv_namespaces": {"KV": {"namespace_id": "nsid"}},
-            }
-        })
+        api.patch_project_config.assert_called_once_with(
+            "p",
+            {
+                "production": {
+                    "env_vars": {"KEEP": {"value": "v", "type": "plain_text"}},
+                    "kv_namespaces": {"KV": {"namespace_id": "nsid"}},
+                }
+            },
+        )
 
     def test_kv_create_on_without_binding_env_fails(self):
         api = Mock()
@@ -353,6 +347,104 @@ class TestSetProjectConfig:
 
         assert set_project_config(api, account) is True
         api.get_project.assert_not_called()
+
+    def test_env_detail_lists_name_value_and_type(self, capsys):
+        api = Mock()
+        api.get_project.return_value = {"deployment_configs": {"production": {"env_vars": {}}}}
+        api.patch_project_config.return_value = True
+        pages = PagesConfig(
+            project_name="p",
+            env=[
+                EnvVar(name="UUID", var_type="plain_text", value="uuid-value"),
+                EnvVar(name="ADMIN", var_type="secret_text", value="admin-value"),
+            ],
+        )
+        account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
+
+        assert set_project_config(api, account) is True
+        out = capsys.readouterr().out
+        assert "环境变量（受管理白名单，共 2 个）" in out
+        assert "目标环境：production" in out
+        assert "UUID = uuid-value [plain_text]" in out
+        assert "ADMIN = admin-value [secret_text]" in out
+        assert "项目配置已提交：环境变量 2 个" in out
+
+    def test_unmanaged_env_removal_warned(self, capsys):
+        api = Mock()
+        api.get_project.return_value = {"deployment_configs": {"production": {"env_vars": {"KEEP": {}, "OLD": {}}}}}
+        api.patch_project_config.return_value = True
+        pages = PagesConfig(
+            project_name="p",
+            env=[EnvVar(name="KEEP", var_type="plain_text", value="v")],
+        )
+        account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
+
+        assert set_project_config(api, account) is True
+        out = capsys.readouterr().out
+        assert "将删除项目上未声明的变量：OLD" in out
+        assert "KEEP" in out
+
+    def test_empty_env_value_warned_and_not_listed(self, capsys):
+        api = Mock()
+        api.get_project.return_value = {"deployment_configs": {"production": {"env_vars": {}}}}
+        api.patch_project_config.return_value = True
+        pages = PagesConfig(
+            project_name="p",
+            env=[
+                EnvVar(name="UUID", var_type="plain_text", value="uuid-value"),
+                EnvVar(name="EMPTY", var_type="plain_text", value=""),
+            ],
+        )
+        account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
+
+        assert set_project_config(api, account) is True
+        out = capsys.readouterr().out
+        assert "变量 EMPTY 的值为空" in out
+        assert "EMPTY = " not in out
+        assert "共 1 个" in out
+
+    def test_kv_binding_detail_printed(self, capsys):
+        api = Mock()
+        api.get_project.return_value = {"deployment_configs": {"production": {"kv_namespaces": {}}}}
+        api.patch_project_config.return_value = True
+        pages = PagesConfig(project_name="p", kv_create=True, kv_binding=True, kv_binding_env="KV")
+        account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
+
+        assert set_project_config(api, account, ns_id="ns-9") is True
+        out = capsys.readouterr().out
+        assert "KV 绑定：KV -> ns-9" in out
+        assert "KV 绑定 1 个" in out
+
+    def test_kv_off_prints_no_binding_line(self, capsys):
+        api = Mock()
+        api.get_project.return_value = {"deployment_configs": {"production": {"env_vars": {}}}}
+        api.patch_project_config.return_value = True
+        pages = PagesConfig(
+            project_name="p",
+            env=[EnvVar(name="KEEP", var_type="plain_text", value="v")],
+            kv_create=False,
+            kv_namespace="ns",
+            kv_binding=True,
+            kv_binding_env="KV",
+        )
+        account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
+
+        assert set_project_config(api, account) is True
+        assert "KV 绑定" not in capsys.readouterr().out
+
+    def test_patch_failure_reports_api_reason(self, capsys):
+        api = Mock()
+        api.get_project.return_value = {"deployment_configs": {"production": {"env_vars": {}}}}
+        api.patch_project_config.return_value = False
+        api.last_error = "[10000]: Authentication error"
+        pages = PagesConfig(
+            project_name="p",
+            env=[EnvVar(name="KEEP", var_type="plain_text", value="v")],
+        )
+        account = Account(name="a", enabled=True, token="t", account_id="aid", pages=pages)
+
+        assert set_project_config(api, account) is False
+        assert "项目配置已提交" not in capsys.readouterr().out
 
 
 class TestSyncProjectDomain:
@@ -414,8 +506,12 @@ class TestSyncProjectDomain:
 class TestSyncDnsRecord:
     def make_account(self, dns: DnsConfig, domain: str = "app.example.com") -> Account:
         return Account(
-            name="a", enabled=True, token="t", account_id="aid",
-            pages=PagesConfig(project_name="p", domain=domain), dns=dns,
+            name="a",
+            enabled=True,
+            token="t",
+            account_id="aid",
+            pages=PagesConfig(project_name="p", domain=domain),
+            dns=dns,
         )
 
     def test_derives_content_from_project_name(self):
@@ -426,9 +522,16 @@ class TestSyncDnsRecord:
 
         assert sync_dns_record(api, self.make_account(DnsConfig(zone_id="zone"))) is True
         api.list_dns_records.assert_called_once_with("zone", "p.pages.dev")
-        api.create_dns_record.assert_called_once_with("zone", {
-            "type": "CNAME", "name": "app.example.com", "content": "p.pages.dev", "proxied": False, "ttl": 1,
-        })
+        api.create_dns_record.assert_called_once_with(
+            "zone",
+            {
+                "type": "CNAME",
+                "name": "app.example.com",
+                "content": "p.pages.dev",
+                "proxied": False,
+                "ttl": 1,
+            },
+        )
 
     def test_explicit_content_overrides_derived(self):
         api = Mock()
@@ -445,16 +548,29 @@ class TestSyncDnsRecord:
         dns = DnsConfig(zone_id="zone", content="target.pages.dev")
 
         assert sync_dns_record(api, self.make_account(dns)) is True
-        api.create_dns_record.assert_called_once_with("zone", {
-            "type": "CNAME", "name": "app.example.com", "content": "target.pages.dev", "proxied": False, "ttl": 1,
-        })
+        api.create_dns_record.assert_called_once_with(
+            "zone",
+            {
+                "type": "CNAME",
+                "name": "app.example.com",
+                "content": "target.pages.dev",
+                "proxied": False,
+                "ttl": 1,
+            },
+        )
 
     def test_skips_matching_record(self):
         api = Mock()
-        api.list_dns_records.return_value = [{
-            "id": "r1", "type": "CNAME", "name": "app.example.com",
-            "content": "target.pages.dev", "proxied": False, "ttl": 1,
-        }]
+        api.list_dns_records.return_value = [
+            {
+                "id": "r1",
+                "type": "CNAME",
+                "name": "app.example.com",
+                "content": "target.pages.dev",
+                "proxied": False,
+                "ttl": 1,
+            }
+        ]
         dns = DnsConfig(zone_id="zone", content="target.pages.dev")
 
         assert sync_dns_record(api, self.make_account(dns)) is True
@@ -462,32 +578,59 @@ class TestSyncDnsRecord:
 
     def test_updates_record_name_found_by_content(self):
         api = Mock()
-        api.list_dns_records.return_value = [{
-            "id": "r1", "type": "CNAME", "name": "old.example.com",
-            "content": "target.pages.dev", "proxied": False, "ttl": 1,
-        }]
+        api.list_dns_records.return_value = [
+            {
+                "id": "r1",
+                "type": "CNAME",
+                "name": "old.example.com",
+                "content": "target.pages.dev",
+                "proxied": False,
+                "ttl": 1,
+            }
+        ]
         api.update_dns_record.return_value = {"success": True}
         dns = DnsConfig(zone_id="zone", content="target.pages.dev")
 
         assert sync_dns_record(api, self.make_account(dns)) is True
-        api.update_dns_record.assert_called_once_with("zone", "r1", {
-            "type": "CNAME", "name": "app.example.com", "content": "target.pages.dev", "proxied": False, "ttl": 1,
-        })
+        api.update_dns_record.assert_called_once_with(
+            "zone",
+            "r1",
+            {
+                "type": "CNAME",
+                "name": "app.example.com",
+                "content": "target.pages.dev",
+                "proxied": False,
+                "ttl": 1,
+            },
+        )
 
     def test_updates_record_type_found_by_content(self):
         api = Mock()
-        api.list_dns_records.return_value = [{
-            "id": "old", "type": "A", "name": "old.example.com", "content": "target.pages.dev",
-        }]
+        api.list_dns_records.return_value = [
+            {
+                "id": "old",
+                "type": "A",
+                "name": "old.example.com",
+                "content": "target.pages.dev",
+            }
+        ]
         api.update_dns_record.return_value = {"success": True}
         dns = DnsConfig(zone_id="zone", content="target.pages.dev")
 
         assert sync_dns_record(api, self.make_account(dns)) is True
         assert api.method_calls == [
             call.list_dns_records("zone", "target.pages.dev"),
-            call.update_dns_record("zone", "old", {
-                "type": "CNAME", "name": "app.example.com", "content": "target.pages.dev", "proxied": False, "ttl": 1,
-            }),
+            call.update_dns_record(
+                "zone",
+                "old",
+                {
+                    "type": "CNAME",
+                    "name": "app.example.com",
+                    "content": "target.pages.dev",
+                    "proxied": False,
+                    "ttl": 1,
+                },
+            ),
         ]
 
 
@@ -495,8 +638,12 @@ class TestDeployProjectDnsResult:
     def make_account(self) -> Account:
         dns = DnsConfig(token="dns-token", zone_id="zone", content="target.pages.dev")
         return Account(
-            name="a", enabled=True, token="t", account_id="aid",
-            pages=PagesConfig(project_name="p", domain="app.example.com"), dns=dns,
+            name="a",
+            enabled=True,
+            token="t",
+            account_id="aid",
+            pages=PagesConfig(project_name="p", domain="app.example.com"),
+            dns=dns,
         )
 
     @patch("cf_pages_batch_scripts.workflows.sync_dns_record", return_value=True)
@@ -504,7 +651,10 @@ class TestDeployProjectDnsResult:
     def test_dns_sync_runs_when_content_omitted(self, run_wrangler: Mock, sync_dns: Mock):
         """只配 zone_id、不写 content 时仍应同步 DNS，目标域名自动拼接。"""
         account = Account(
-            name="a", enabled=True, token="t", account_id="aid",
+            name="a",
+            enabled=True,
+            token="t",
+            account_id="aid",
             pages=PagesConfig(project_name="p", domain="app.example.com"),
             dns=DnsConfig(token="dns-token", zone_id="zone"),
         )
@@ -546,7 +696,10 @@ class TestDeployProjectSingleDeploy:
 
     def make_account(self) -> Account:
         return Account(
-            name="a", enabled=True, token="t", account_id="aid",
+            name="a",
+            enabled=True,
+            token="t",
+            account_id="aid",
             pages=PagesConfig(
                 project_name="p",
                 domain="app.example.com",
@@ -571,6 +724,15 @@ class TestDeployProjectSingleDeploy:
     def test_deploys_exactly_once(self, run_wrangler: Mock, sync_dns: Mock):
         assert deploy_project(self.make_api(), self.make_account(), Path("source")) is True
         assert run_wrangler.call_count == 1
+
+    @patch("cf_pages_batch_scripts.workflows.sync_dns_record", return_value=True)
+    @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
+    def test_final_summary_lists_carried_config(self, run_wrangler: Mock, sync_dns: Mock, capsys):
+        assert deploy_project(self.make_api(), self.make_account(), Path("source")) is True
+        out = capsys.readouterr().out
+        assert "已一次部署完成" in out
+        assert "域名 app.example.com" in out
+        assert "环境变量 1 个" in out
 
     @patch("cf_pages_batch_scripts.workflows.sync_dns_record", return_value=True)
     @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
@@ -646,9 +808,7 @@ class TestDeployProjectKv:
     def test_kv_create_uses_ensure_and_does_not_post_create(self, run_wrangler: Mock, capsys):
         api = self.make_api()
         api.ensure_kv_namespace.return_value = ("ns-1", True)
-        account = self.make_account(
-            kv_create=True, kv_namespace="ns", kv_binding=True, kv_binding_env="KV"
-        )
+        account = self.make_account(kv_create=True, kv_namespace="ns", kv_binding=True, kv_binding_env="KV")
 
         assert deploy_project(api, account, Path("source")) is True
         api.ensure_kv_namespace.assert_called_once_with("ns")
@@ -659,9 +819,7 @@ class TestDeployProjectKv:
     @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
     def test_kv_create_off_skips_all_kv_calls(self, run_wrangler: Mock, capsys):
         api = self.make_api()
-        account = self.make_account(
-            kv_create=False, kv_namespace="ns", kv_binding=True, kv_binding_env="KV"
-        )
+        account = self.make_account(kv_create=False, kv_namespace="ns", kv_binding=True, kv_binding_env="KV")
 
         assert deploy_project(api, account, Path("source")) is True
         api.ensure_kv_namespace.assert_not_called()
@@ -684,9 +842,7 @@ class TestDeployProjectKv:
     def test_missing_namespace_id_fails_before_redeploy(self, run_wrangler: Mock):
         api = self.make_api()
         api.ensure_kv_namespace.return_value = (None, False)
-        account = self.make_account(
-            kv_create=True, kv_namespace="ns", kv_binding=True, kv_binding_env="KV"
-        )
+        account = self.make_account(kv_create=True, kv_namespace="ns", kv_binding=True, kv_binding_env="KV")
 
         assert deploy_project(api, account, Path("source")) is False
         # 配置失败即止：一次部署都不该发生
@@ -711,7 +867,10 @@ class TestDeleteWorkflowLiveQuery:
 
     def make_account(self, zone_id: str = "zone", **pages_kwargs) -> Account:
         return Account(
-            name="a", enabled=True, token="t", account_id="aid",
+            name="a",
+            enabled=True,
+            token="t",
+            account_id="aid",
             pages=PagesConfig(project_name="configured-p", **pages_kwargs),
             dns=DnsConfig(token="dns-token", zone_id=zone_id),
         )
@@ -723,18 +882,16 @@ class TestDeleteWorkflowLiveQuery:
         dns: list[dict] | None = None,
     ) -> Mock:
         api = Mock()
-        api.list_projects.return_value = (
-            projects if projects is not None else [{"name": "p1"}, {"name": "p2"}]
-        )
+        api.list_projects.return_value = projects if projects is not None else [{"name": "p1"}, {"name": "p2"}]
         api.list_domains.side_effect = lambda name: {
             "p1": [{"name": "d1.example.com"}],
             "p2": [],
         }.get(name, [])
-        api.list_kv_namespaces.return_value = (
-            kv if kv is not None else [{"id": "ns1", "title": "ns1"}]
-        )
+        api.list_kv_namespaces.return_value = kv if kv is not None else [{"id": "ns1", "title": "ns1"}]
         api.list_zone_dns_records.return_value = (
-            dns if dns is not None else [
+            dns
+            if dns is not None
+            else [
                 {"id": "r1", "name": "d1.example.com", "type": "CNAME", "content": "p1.pages.dev"},
                 {"id": "r2", "name": "d2.example.com", "type": "CNAME", "content": "p2.pages.dev"},
                 {"id": "r3", "name": "example.com", "type": "MX", "content": "mx.example.net"},
@@ -782,12 +939,10 @@ class TestDeleteWorkflowLiveQuery:
     def test_deletes_all_domains_before_their_project(self):
         api = self.make_api()
         order: list[tuple] = []
-        api.delete_domain.side_effect = (
-            lambda project, domain: order.append(("domain", project, domain)) or {"success": True}
+        api.delete_domain.side_effect = lambda project, domain: (
+            order.append(("domain", project, domain)) or {"success": True}
         )
-        api.delete_project.side_effect = (
-            lambda project: order.append(("project", project)) or {"success": True}
-        )
+        api.delete_project.side_effect = lambda project: order.append(("project", project)) or {"success": True}
 
         self.run_delete([self.make_account()], {"t": api}, {"dns-token": api})
 
@@ -796,9 +951,7 @@ class TestDeleteWorkflowLiveQuery:
 
     def test_deletes_all_kv_namespaces_ignoring_kv_create(self):
         api = self.make_api(kv=[{"id": "ns1", "title": "ns1"}, {"id": "ns2", "title": "ns2"}])
-        self.run_delete(
-            [self.make_account(kv_create=False, kv_namespace="")], {"t": api}, {"dns-token": api}
-        )
+        self.run_delete([self.make_account(kv_create=False, kv_namespace="")], {"t": api}, {"dns-token": api})
 
         assert [c.args[0] for c in api.delete_kv_namespace.call_args_list] == ["ns1", "ns2"]
 
@@ -873,9 +1026,7 @@ class TestDeleteWorkflowLiveQuery:
 
     def test_extra_kv_namespaces_flagged(self, capsys):
         api = self.make_api(kv=[{"id": "ns1", "title": "other"}])
-        self.run_delete(
-            [self.make_account(kv_namespace="mine")], {"t": api}, {"dns-token": api}
-        )
+        self.run_delete([self.make_account(kv_namespace="mine")], {"t": api}, {"dns-token": api})
 
         out = capsys.readouterr().out
         assert "非配置文件中的 KV 命名空间" in out
@@ -886,11 +1037,17 @@ class TestDeleteWorkflowResilience:
 
     def test_account_exception_does_not_abort_remaining(self, capsys):
         acc1 = Account(
-            name="a1", enabled=True, token="t1", account_id="aid",
+            name="a1",
+            enabled=True,
+            token="t1",
+            account_id="aid",
             pages=PagesConfig(project_name="p1"),
         )
         acc2 = Account(
-            name="a2", enabled=True, token="t2", account_id="aid",
+            name="a2",
+            enabled=True,
+            token="t2",
+            account_id="aid",
             pages=PagesConfig(project_name="p2"),
         )
 
@@ -913,9 +1070,7 @@ class TestDeleteWorkflowResilience:
             patch("cf_pages_batch_scripts.workflows.wait_enter"),
             patch("builtins.input", return_value="yes"),
         ):
-            client_cls.side_effect = lambda account_id, token, **kw: _FakeCtx(
-                {"t1": api1, "t2": api2}[token]
-            )
+            client_cls.side_effect = lambda account_id, token, **kw: _FakeCtx({"t1": api1, "t2": api2}[token])
             delete_workflow(Config(accounts=[acc1, acc2]))
 
         api2.delete_project.assert_called_once_with("p2")
