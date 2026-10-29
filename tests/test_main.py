@@ -30,3 +30,40 @@ def test_config_load_error_reported_cleanly(error: Exception, capsys: pytest.Cap
     main_mod.main()
 
     assert str(error) in capsys.readouterr().out
+
+
+class TestConsoleEncoding:
+    """Windows GBK 代码页下打印 wrangler 的 emoji 输出不应崩溃。"""
+
+    def test_reconfigures_stdout_and_stderr(self, monkeypatch):
+        calls: list[dict] = []
+
+        class Fake:
+            def reconfigure(self, **kwargs):
+                calls.append(kwargs)
+
+        monkeypatch.setattr(sys, "stdout", Fake())
+        monkeypatch.setattr(sys, "stderr", Fake())
+
+        main_mod._ensure_console_encoding()
+
+        assert calls == [{"errors": "replace"}, {"errors": "replace"}]
+
+    def test_tolerates_streams_without_reconfigure(self, monkeypatch):
+        class Fake:
+            pass
+
+        monkeypatch.setattr(sys, "stdout", Fake())
+        monkeypatch.setattr(sys, "stderr", Fake())
+
+        main_mod._ensure_console_encoding()
+
+    def test_swallows_reconfigure_failure(self, monkeypatch):
+        class Fake:
+            def reconfigure(self, **kwargs):
+                raise ValueError("I/O operation on closed file")
+
+        monkeypatch.setattr(sys, "stdout", Fake())
+        monkeypatch.setattr(sys, "stderr", Fake())
+
+        main_mod._ensure_console_encoding()
