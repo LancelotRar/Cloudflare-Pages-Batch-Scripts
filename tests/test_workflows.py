@@ -12,6 +12,8 @@ from cf_pages_batch_scripts.workflows import (
     DOWNLOAD_ATTEMPTS,
     _run_wrangler,
     _wrangler_error_hint,
+    clear_project_dns,
+    clear_project_domains,
     delete_workflow,
     deploy_project,
     prepare_source,
@@ -818,6 +820,8 @@ class TestDeployProjectKv:
         api.get_project.return_value = {}
         api.patch_project_config.return_value = True
         api.last_error = None
+        # domain 留空会走清理模式，需要域名查询返回可迭代结果
+        api.list_domains.return_value = []
         return api
 
     @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
@@ -1093,3 +1097,225 @@ class TestDeleteWorkflowResilience:
         out = capsys.readouterr().out
         assert "执行异常" in out
         assert "失败账号：a1" in out
+
+
+class TestClearProjectDomains:
+    """domain 留空 = 清理模式：解绑项目上全部自定义域。"""
+
+    def test_deletes_every_domain(self):
+        api = Mock()
+        api.list_domains.return_value = [{"name": "a.example.com"}, {"name": "b.example.com"}]
+        api.delete_domain.return_value = {"success": True}
+
+        assert clear_project_domains(api, "project") is True
+        assert api.delete_domain.call_args_list == [
+            call("project", "a.example.com"),
+            call("project", "b.example.com"),
+        ]
+
+    def test_ignores_entries_without_name(self):
+        api = Mock()
+        api.list_domains.return_value = [{"name": ""}, {"name": None}, {}]
+
+        assert clear_project_domains(api, "project") is True
+        api.delete_domain.assert_not_called()
+
+    def test_no_domain_is_noop(self):
+        api = Mock()
+        api.list_domains.return_value = []
+
+        assert clear_project_domains(api, "project") is True
+        api.delete_domain.assert_not_called()
+
+    def test_stops_when_query_fails(self):
+        api = Mock()
+        api.list_domains.return_value = None
+
+        assert clear_project_domains(api, "project") is False
+        api.delete_domain.assert_not_called()
+
+    def test_stops_when_delete_fails(self):
+        api = Mock()
+        api.list_domains.return_value = [{"name": "a.example.com"}]
+        api.delete_domain.return_value = {"success": False}
+
+        assert clear_project_domains(api, "project") is False
+
+
+class TestClearProjectDns:
+    """domain 留空 = 清理模式：按记录值精确删除本项目 DNS 记录，不限类型。"""
+
+    def make_account(self, project: str = "p") -> Account:
+        return Account(
+            name="a",
+            enabled=True,
+            token="t",
+            account_id="aid",
+            pages=PagesConfig(project_name=project, domain=""),
+            dns=DnsConfig(token="dns-token", zone_id="zone"),
+        )
+
+    def test_deletes_all_record_types_matching_project_content(self):
+        api = Mock()
+        api.list_dns_records.return_value = [
+            {"id": "r1", "type": "CNAME", "name": "a.example.com", "content": "p.pages.dev"},
+            {"id": "r2", "type": "TXT", "name": "b.example.com", "content": "p.pages.dev"},
+        ]
+        api.delete_dns_record.return_value = {"success": True}
+
+        assert clear_project_dns(api, self.make_account()) is True
+        api.list_dns_records.assert_called_once_with("zone", "p.pages.dev")
+        assert api.delete_dns_record.call_args_list == [call("zone", "r1"), call("zone", "r2")]
+
+    def test_keeps_other_projects_records(self):
+        """其他项目的 pages.dev 记录不能被删。"""
+        api = Mock()
+        api.list_dns_records.return_value = [
+            {"id": "other", "type": "CNAME", "name": "x.example.com", "content": "other.pages.dev"},
+        ]
+
+        assert clear_project_dns(api, self.make_account()) is True
+        api.delete_dns_record.assert_not_called()
+
+    def test_uses_explicit_content_when_configured(self):
+        api = Mock()
+        api.list_dns_records.return_value = []
+        account = Account(
+            name="a",
+            enabled=True,
+            token="t",
+            account_id="aid",
+            pages=PagesConfig(project_name="p", domain=""),
+            dns=DnsConfig(token="dns-token", zone_id="zone", content="custom.pages.dev"),
+        )
+
+        assert clear_project_dns(api, account) is True
+        api.list_dns_records.assert_called_once_with("zone", "custom.pages.dev")
+
+    def test_no_record_is_noop(self):
+        api = Mock()
+        api.list_dns_records.return_value = []
+
+        assert clear_project_dns(api, self.make_account()) is True
+        api.delete_dns_record.assert_not_called()
+
+    def test_skips_without_zone_id(self):
+        api = Mock()
+        account = Account(
+            name="a",
+            enabled=True,
+            token="t",
+            account_id="aid",
+            pages=PagesConfig(project_name="p", domain=""),
+            dns=DnsConfig(token="dns-token"),
+        )
+
+        assert clear_project_dns(api, account) is True
+        api.list_dns_records.assert_not_called()
+
+    def test_stops_when_query_fails(self):
+        api = Mock()
+        api.list_dns_records.return_value = None
+
+        assert clear_project_dns(api, self.make_account()) is False
+        api.delete_dns_record.assert_not_called()
+
+    def test_stops_when_record_lacks_id(self):
+        api = Mock()
+        api.list_dns_records.return_value = [
+            {"type": "CNAME", "name": "a.example.com", "content": "p.pages.dev"},
+        ]
+
+        assert clear_project_dns(api, self.make_account()) is False
+        api.delete_dns_record.assert_not_called()
+
+    def test_stops_when_delete_fails(self):
+        api = Mock()
+        api.list_dns_records.return_value = [
+            {"id": "r1", "type": "CNAME", "name": "a.example.com", "content": "p.pages.dev"},
+        ]
+        api.delete_dns_record.return_value = {"success": False}
+
+        assert clear_project_dns(api, self.make_account()) is False
+
+
+class TestDeployProjectWithoutDomain:
+    """domain 留空 = 清理模式：删 DNS → 解绑自定义域 → 照常部署。"""
+
+    def make_account(self, dns: DnsConfig | None = None) -> Account:
+        return Account(
+            name="a",
+            enabled=True,
+            token="t",
+            account_id="aid",
+            pages=PagesConfig(project_name="p", domain=""),
+            dns=DnsConfig(token="dns-token", zone_id="zone") if dns is None else dns,
+        )
+
+    def make_api(self) -> Mock:
+        api = Mock()
+        api.create_project.return_value = {"success": True}
+        api.get_project.return_value = {}
+        api.patch_project_config.return_value = True
+        api.last_error = None
+        api.list_domains.return_value = []
+        api.delete_domain.return_value = {"success": True}
+        return api
+
+    @patch("cf_pages_batch_scripts.workflows.clear_project_dns", return_value=True)
+    @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
+    def test_cleans_dns_and_domains_then_deploys(self, run_wrangler: Mock, clear_dns: Mock):
+        api = self.make_api()
+        api.list_domains.return_value = [{"name": "old.example.com"}]
+
+        assert deploy_project(api, self.make_account(), Path("source")) is True
+        clear_dns.assert_called_once()
+        api.add_domain.assert_not_called()
+        api.delete_domain.assert_called_once_with("p", "old.example.com")
+        run_wrangler.assert_called_once()
+
+    @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
+    def test_dns_cleanup_runs_before_domain_unbind(self, run_wrangler: Mock):
+        api = self.make_api()
+        api.list_domains.return_value = [{"name": "old.example.com"}]
+        order: list[str] = []
+        api.delete_domain.side_effect = lambda *a, **k: order.append("domain") or {"success": True}
+
+        with patch(
+            "cf_pages_batch_scripts.workflows.clear_project_dns",
+            side_effect=lambda *a, **k: order.append("dns") or True,
+        ):
+            assert deploy_project(api, self.make_account(), Path("source")) is True
+        assert order == ["dns", "domain"]
+
+    @patch("cf_pages_batch_scripts.workflows.clear_project_dns", return_value=True)
+    @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
+    def test_skips_dns_cleanup_without_credentials(self, run_wrangler: Mock, clear_dns: Mock, capsys):
+        api = self.make_api()
+
+        assert deploy_project(api, self.make_account(DnsConfig()), Path("source")) is True
+        clear_dns.assert_not_called()
+        assert "跳过 DNS 清理" in capsys.readouterr().out
+
+    @patch("cf_pages_batch_scripts.workflows.clear_project_dns", return_value=False)
+    @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
+    def test_dns_cleanup_failure_blocks_deploy(self, run_wrangler: Mock, clear_dns: Mock):
+        assert deploy_project(self.make_api(), self.make_account(), Path("source")) is False
+        run_wrangler.assert_not_called()
+
+    @patch("cf_pages_batch_scripts.workflows.clear_project_dns", return_value=True)
+    @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
+    def test_domain_unbind_failure_blocks_deploy(self, run_wrangler: Mock, clear_dns: Mock):
+        api = self.make_api()
+        api.list_domains.return_value = [{"name": "old.example.com"}]
+        api.delete_domain.return_value = {"success": False}
+
+        assert deploy_project(api, self.make_account(), Path("source")) is False
+        run_wrangler.assert_not_called()
+
+    @patch("cf_pages_batch_scripts.workflows.clear_project_dns", return_value=True)
+    @patch("cf_pages_batch_scripts.workflows._run_wrangler", return_value=True)
+    def test_summary_reports_cleared_domain(self, run_wrangler: Mock, clear_dns: Mock, capsys):
+        assert deploy_project(self.make_api(), self.make_account(), Path("source")) is True
+        out = capsys.readouterr().out
+        assert "域名 已清理" in out

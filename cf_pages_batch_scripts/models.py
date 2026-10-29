@@ -15,7 +15,7 @@ class PagesConfig:
     """单个 Pages 项目的配置"""
 
     project_name: str
-    domain: str = ""
+    domain: str = ""  # 留空 = 清理模式：解绑项目自定义域并删除指向本项目的 DNS 记录
     kv_create: bool = False
     kv_namespace: str = ""
     kv_binding: bool = False
@@ -49,7 +49,10 @@ class Account:
 
     @property
     def dns_content(self) -> str:
-        """DNS 记录目标值；未显式配置 dns.content 时按 Pages 默认域名拼接。"""
+        """DNS 记录目标值：创建/修改时写入记录，`domain` 留空时作为清理匹配条件。
+
+        未显式配置 dns.content 时按 Pages 默认域名拼接。
+        """
         if self.dns.content:
             return self.dns.content
         return f"{self.pages.project_name}.pages.dev" if self.pages.project_name else ""

@@ -187,6 +187,42 @@ def set_project_config(api: CfApiClient, account: Account, ns_id: str | None = N
     return ok
 
 
+def _domain_names(domains: list[dict]) -> list[str]:
+    """提取 API 返回中的有效域名列表，忽略空值。"""
+    names: list[str] = []
+    for entry in domains:
+        name = entry.get("name")
+        if isinstance(name, str) and name:
+            names.append(name)
+    return names
+
+
+def _delete_domains(api: CfApiClient, project: str, names: list[str]) -> bool:
+    """逐个解绑自定义域；任一失败返回 False。"""
+    for name in names:
+        print_info(f"  正在解绑域名 '{name}' ...")
+        result = api.delete_domain(project, name)
+        if not result or not result.get("success"):
+            print_error(f"  解绑域名失败：{name}")
+            return False
+        print_ok(f"  域名已解绑：{name}")
+    return True
+
+
+def clear_project_domains(api: CfApiClient, project: str) -> bool:
+    """解绑项目的全部自定义域；pages.domain 留空时使用。"""
+    domains = api.list_domains(project)
+    if domains is None:
+        print_error("  查询项目现有域名失败")
+        return False
+
+    names = _domain_names(domains)
+    if not names:
+        print_ok("  项目无自定义域名，跳过解绑")
+        return True
+    return _delete_domains(api, project, names)
+
+
 def sync_project_domain(api: CfApiClient, project: str, target_domain: str) -> bool:
     """Replace all existing custom domains with the configured target domain."""
     domains = api.list_domains(project)
@@ -194,20 +230,9 @@ def sync_project_domain(api: CfApiClient, project: str, target_domain: str) -> b
         print_error("  查询项目现有域名失败")
         return False
 
-    existing_names: list[str] = []
-    for entry in domains:
-        name = entry.get("name")
-        if isinstance(name, str) and name:
-            existing_names.append(name)
-    for existing in existing_names:
-        if existing == target_domain:
-            continue
-        print_info(f"  正在删除旧域名 '{existing}' ...")
-        result = api.delete_domain(project, existing)
-        if not result or not result.get("success"):
-            print_error(f"  删除旧域名失败：{existing}")
-            return False
-        print_ok(f"  旧域名已删除：{existing}")
+    existing_names = _domain_names(domains)
+    if not _delete_domains(api, project, [name for name in existing_names if name != target_domain]):
+        return False
 
     if target_domain in existing_names:
         print_ok(f"  域名已配置，跳过：{target_domain}")
@@ -292,6 +317,47 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
         print_error(f"  修改 DNS 记录失败：{domain}")
         return False
     print_ok(f"  DNS 记录已修改：{domain} -> {content}")
+    return True
+
+
+def clear_project_dns(api: CfApiClient, account: Account) -> bool:
+    """删除指向本项目 <project>.pages.dev 的全部 DNS 记录；pages.domain 留空时使用。
+
+    按记录值精确匹配（`content.exact`），只会命中本项目的记录，不影响同 Zone
+    内其他项目的解析；不限制记录类型。
+    """
+    zone_id = account.dns.zone_id
+    content = account.dns_content
+    if not zone_id or not content:
+        return True
+
+    print_info(f"  正在按内容查询 DNS 记录 '{content}' ...")
+    records = api.list_dns_records(zone_id, content)
+    if records is None:
+        error = api.last_error
+        print_error(f"  查询 DNS 记录失败：{error}" if error else "  查询 DNS 记录失败")
+        return False
+
+    matches = [record for record in records if str(record.get("content", "")).lower() == content.lower()]
+    if not matches:
+        print_ok(f"  无指向 '{content}' 的 DNS 记录，跳过清理")
+        return True
+
+    ids: list[str] = []
+    for record in matches:
+        record_id = record.get("id")
+        if not isinstance(record_id, str) or not record_id:
+            print_error(f"  DNS 记录缺少 ID，无法删除：{record.get('name', content)}")
+            return False
+        ids.append(record_id)
+
+    for record, record_id in zip(matches, ids, strict=True):
+        label = f"{record.get('type', '')} {record.get('name', '')} -> {content}".strip()
+        result = api.delete_dns_record(zone_id, record_id)
+        if not result or not result.get("success"):
+            print_error(f"  删除 DNS 记录失败：{label}")
+            return False
+        print_ok(f"  DNS 记录已删除：{label}")
     return True
 
 
@@ -398,6 +464,24 @@ def _run_wrangler(source_dir: Path, project: str, token: str, account_id: str, s
         return False
 
 
+def _sync_or_clear_dns(account: Account, proxy: str) -> bool:
+    """pages.domain 非空时收敛 DNS 记录，留空时删除指向本项目的记录。"""
+    if account.pages.domain:
+        if not (account.dns.zone_id and account.dns_content):
+            return True
+        if not account.dns.token:
+            print_error("  DNS 配置缺少独立的 dns_token")
+            return False
+        with CfApiClient(account.account_id, account.dns.token, proxy=proxy) as dns_api:
+            return sync_dns_record(dns_api, account)
+
+    if not (account.dns.zone_id and account.dns_content and account.dns.token):
+        print_warn("  未配置 DNS 凭据，跳过 DNS 清理")
+        return True
+    with CfApiClient(account.account_id, account.dns.token, proxy=proxy) as dns_api:
+        return clear_project_dns(dns_api, account)
+
+
 def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: str = "") -> bool:
     """Full deploy workflow for a single account."""
     project = account.pages.project_name
@@ -438,27 +522,24 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: 
         print_error(f"  环境变量或 KV 绑定配置失败：{api.last_error or '未知原因'}")
         return False
 
-    # 自定义域名
+    # 自定义域名：非空时收敛；留空时等 DNS 清理完成后再解绑
     if account.pages.domain and not sync_project_domain(api, project, account.pages.domain):
         return False
 
-    # ========== 第三步：同步 DNS ==========
-    print_info("  [3/4] 同步 DNS 记录 ...")
+    # ========== 第三步：同步 / 清理 DNS ==========
+    print_info("  [3/4] 同步 / 清理 DNS 记录 ...")
     try:
-        dns_configured = bool(account.dns.zone_id and account.pages.domain and account.dns_content)
-        if not dns_configured:
-            dns_synced = True
-        elif not account.dns.token:
-            print_error("  DNS 配置缺少独立的 dns_token")
-            dns_synced = False
-        else:
-            with CfApiClient(account.account_id, account.dns.token, proxy=proxy) as dns_api:
-                dns_synced = sync_dns_record(dns_api, account)
+        dns_synced = _sync_or_clear_dns(account, proxy)
     except Exception as exc:
-        print_error(f"  DNS 同步异常：{exc}")
+        print_error(f"  DNS 处理异常：{exc}")
         dns_synced = False
     if not dns_synced:
-        print_error(f"  DNS 同步失败，账号 '{account.name}' 配置未完全收敛")
+        print_error(f"  DNS 处理失败，账号 '{account.name}' 配置未完全收敛")
+        return False
+
+    # domain 留空 = 清理模式：DNS 记录删完后解绑项目上的全部自定义域
+    if not account.pages.domain and not clear_project_domains(api, project):
+        print_error(f"  自定义域解绑失败，账号 '{account.name}' 配置未完全收敛")
         return False
 
     # ========== 第四步：部署（仅一次） ==========
@@ -468,7 +549,7 @@ def deploy_project(api: CfApiClient, account: Account, source_dir: Path, proxy: 
     if not _run_wrangler(source_dir, project, account.token, account.account_id, "上传部署"):
         print_error("  上传部署失败")
         return False
-    carried = [f"域名 {account.pages.domain or '未配置'}"]
+    carried = [f"域名 {account.pages.domain}" if account.pages.domain else "域名 已清理"]
     env_count = sum(1 for ev in account.pages.env if ev.name and ev.value)
     if env_count:
         carried.append(f"环境变量 {env_count} 个")
@@ -499,8 +580,8 @@ def deploy_workflow(cfg: Config) -> None:
     print_header("部署项目")
     print_info("将对每个账号依次执行：")
     print_info("  1. 创建项目（通过 CF API）")
-    print_info("  2. 配置项目：KV 命名空间 → 环境变量 + KV 绑定 → 自定义域名")
-    print_info("  3. 同步 DNS 记录（失败时当前账号标记失败）")
+    print_info("  2. 配置项目：KV 命名空间 → 环境变量 + KV 绑定 → 自定义域名（非空时收敛）")
+    print_info("  3. 同步 / 清理 DNS 记录（留空时先删 DNS 再解绑自定义域；失败时当前账号标记失败）")
     print_info("  4. 部署源码：wrangler pages deploy（单次部署即携带上述配置）")
     print()
 

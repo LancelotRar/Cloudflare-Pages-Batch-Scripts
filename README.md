@@ -2,7 +2,7 @@
 
 # Cloudflare Pages Batch Scripts
 
-### 多账号 Cloudflare Pages 批量部署/删除工具。从 ZIP 下载源码 → 创建 Pages 项目 → 配置环境变量 + KV 绑定 + 自定义域名 → 同步 DNS 记录 → wrangler 一次部署生效，全流程自动化。支持通过 HTTP/S 代理（`proxy` 配置）下载源码与请求 Cloudflare API。
+### 多账号 Cloudflare Pages 批量部署/删除工具。从 ZIP 下载源码 → 创建 Pages 项目 → 配置环境变量 + KV 绑定 + 自定义域名 → 同步/清理 DNS 记录 → wrangler 一次部署生效，全流程自动化。支持通过 HTTP/S 代理（`proxy` 配置）下载源码与请求 Cloudflare API。
 
 <img src="https://img.shields.io/badge/python-3.10+-blue?logo=python" alt="Python">
 <img src="https://img.shields.io/badge/license-MIT-green" alt="License"><br>
@@ -24,8 +24,8 @@
 对每个账号自动执行：
 
 1. 通过 CF API 创建 Pages 项目（已存在则跳过）
-2. 配置项目：创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 同步自定义域名
-3. 查询并同步 DNS 记录（失败时当前账号标记失败，继续后续账号）
+2. 配置项目：创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 收敛自定义域名（`domain` 非空时）
+3. 查询并同步 / 清理 DNS 记录；`domain` 留空时随后解绑项目全部自定义域名（失败时当前账号标记失败，继续后续账号）
 4. `wrangler pages deploy` 一次部署，上述配置随本次部署生效
 
 ### 批量删除
@@ -171,6 +171,7 @@ Mypageskvyes: &Mypageskvyes {kv_create: true, kv_binding: true, kv_binding_env: 
 Mypageskvno: &Mypageskvno {kv_create: false, kv_binding: false, project_type: production}
 MyDNS: &MyDNS {dns_token: cfat_0000000000000000000000000000000000000000, zone_id: 00000000000000000000000000000000, type: CNAME, proxied: false, ttl: auto}
 # dns.content 可省略：默认拼接 <pages.project_name>.pages.dev。
+# pages.domain 留空 = 清理模式：删除指向 <project_name>.pages.dev 的 DNS 记录，并解绑该项目全部自定义域名。
 
 # 可选：HTTP/S 代理，用于源码下载与 Cloudflare API 请求。
 # 留空或删除时信任环境变量代理（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY）。
@@ -245,7 +246,7 @@ accounts:
 | | `token` | 当前 Pages 项目所在账户的 API Token |
 | | `account_id` | 当前 Pages 项目所在账户的 Account ID |
 | `accounts[].pages` | `project_name` | Pages 项目名称 |
-| | `domain` | 目标自定义域名；部署时删除项目中其他自定义域名后添加该域名（为空则跳过） |
+| | `domain` | 目标自定义域名；非空时删除项目中其他自定义域名后添加该域名；**为空时解绑项目全部自定义域名，并在配置了 DNS 凭据时删除指向本项目 `<project_name>.pages.dev` 的 DNS 记录** |
 | | `kv_create` | **KV 操作总开关（仅影响部署）**：`false` 时部署阶段不执行任何 KV 操作；`true` 时要求 `kv_namespace`、`kv_binding: true`、`kv_binding_env` 全部配置完整，否则该账号报错跳过。删除流程不受此开关影响，会清理账号下全部 KV 命名空间 |
 | | `kv_namespace` | KV 命名空间标题（`kv_create: true` 时必填） |
 | | `kv_binding` | 是否将 KV 绑定到项目；`kv_create: true` 时必须为 `true` |
@@ -257,7 +258,7 @@ accounts:
 | `accounts[].dns` | `zone_id` | 托管目标域名账户中的 Zone ID，与当前 Pages 账户的 `account_id` 无关 |
 | | `dns_token` | 托管目标域名账户的独立 API Token，需对目标 Zone 具有 `DNS Write` 权限；不会使用当前 Pages 账户的 `token` |
 | | `type` | DNS 记录类型，默认 `CNAME` |
-| | `content` | 可选，DNS 记录目标值；省略时自动拼接 `<project_name>.pages.dev`（记录名取 `pages.domain`） |
+| | `content` | 可选，DNS 记录目标值；省略时自动拼接 `<project_name>.pages.dev`（创建/修改时作为记录值，`domain` 留空时作为清理匹配条件） |
 | | `proxied` | 是否启用 Cloudflare 代理 |
 | | `ttl` | TTL 秒数；`auto` 表示自动（API 值 `1`） |
 
@@ -274,17 +275,19 @@ accounts:
 对每个选中的账号依次执行：
 
 1. **创建项目** — 通过 CF API 创建 Pages 项目（已存在则跳过）
-2. **配置项目** — 创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 同步自定义域名
-3. **同步 DNS** — 查询并创建或修改 DNS 记录
+2. **配置项目** — 创建/查找 KV 命名空间 → 设置环境变量 + KV 绑定 → 收敛自定义域名（`domain` 非空时）
+3. **DNS 与域名清理** — `domain` 非空时同步 DNS 记录；为空时删除指向本项目的 DNS 记录，再解绑项目全部自定义域
 4. **一次部署** — `wrangler pages deploy` 上传源码，上述配置随本次部署注入生效
 
 > 为什么只部署一次？Cloudflare Pages 的项目配置（环境变量、KV 绑定、域名）在下一次部署时注入。脚本因此在部署前完成全部配置，一次部署即可生效，不再需要“先部署再配置再重新部署”。这样既减少部署次数，也避免第二次部署失败（如项目被封禁）导致配置永远不生效。
 
 配置了 `domain` 时，脚本会先查询项目当前绑定的自定义域名，删除所有与目标域名不同的旧域名，再添加目标域名。目标域名已经存在时不会重复添加；查询、删除或添加失败时会停止该账号的部署，不消耗本次部署机会。
 
-非空 `pages.env` 是受管理环境的完整白名单，脚本会添加或修改目标变量，并删除未声明的多余变量。`kv_create` 是部署阶段的 KV 操作总开关：为 `false` 时部署阶段完全不执行 KV 操作（不查询、不创建、不改绑定；该开关不影响删除流程，删除会清理账号下全部 KV 命名空间）；为 `true` 时要求 `kv_namespace`、`kv_binding: true`、`kv_binding_env` 配置完整（缺失则该账号报错跳过），随后确保命名空间存在（查询优先、缺失才创建）并将项目 KV 绑定严格收敛为唯一目标绑定。环境变量为空或 `domain` 为空时，对应配置不进行任何操作。
+`domain` 留空时进入**清理模式**：先用 `content.exact` 精确查询并删除指向本项目 `<project_name>.pages.dev` 的全部 DNS 记录（不限记录类型），再解绑该项目上所有已绑定的自定义域名，最后照常部署。因为匹配的是本项目的 `pages.dev` 记录值，同 Zone 内其他项目的记录不会被触碰。清理失败同样会停止该账号的部署。
 
-`dns.zone_id`、`dns.dns_token` 与 `pages.domain` 均非空时，脚本使用域名托管账户的 `dns_token` 和 `zone_id` 建立独立 DNS API 请求，不使用 Pages 项目账户的 `token` 或 `account_id`。DNS 记录目标值默认由 `pages.project_name` 拼接为 `<project_name>.pages.dev`，只有目标域名不同时才需要显式写 `content`。随后通过 Cloudflare API 的 `content.exact` 查询参数精确匹配 DNS 记录。找到记录后会将其名称、类型、代理状态和 TTL 修改为声明配置；记录不存在时创建，重复内容的记录会收敛为一条。DNS 查询、创建或修改失败会显示 Cloudflare API 错误详情并使当前账号失败（该账号不会再执行部署），但不会影响后续账号继续部署。
+非空 `pages.env` 是受管理环境的完整白名单，脚本会添加或修改目标变量，并删除未声明的多余变量。`kv_create` 是部署阶段的 KV 操作总开关：为 `false` 时部署阶段完全不执行 KV 操作（不查询、不创建、不改绑定；该开关不影响删除流程，删除会清理账号下全部 KV 命名空间）；为 `true` 时要求 `kv_namespace`、`kv_binding: true`、`kv_binding_env` 配置完整（缺失则该账号报错跳过），随后确保命名空间存在（查询优先、缺失才创建）并将项目 KV 绑定严格收敛为唯一目标绑定。环境变量为空时不做任何环境变量操作。
+
+`dns.zone_id` 与 `dns.dns_token` 均非空时，脚本使用域名托管账户的 `dns_token` 和 `zone_id` 建立独立 DNS API 请求，不使用 Pages 项目账户的 `token` 或 `account_id`。DNS 记录目标值默认由 `pages.project_name` 拼接为 `<project_name>.pages.dev`，只有目标域名不同时才需要显式写 `content`。随后通过 Cloudflare API 的 `content.exact` 查询参数精确匹配 DNS 记录。`domain` 非空时，找到记录后会将其名称、类型、代理状态和 TTL 修改为声明配置；记录不存在时创建，重复内容的记录会收敛为一条。`domain` 为空时则删除匹配到的记录；未配置 `zone_id` 或 `dns_token` 时打印警告并跳过 DNS 清理，仅解绑自定义域名。DNS 查询、创建、修改或删除失败会显示 Cloudflare API 错误详情并使当前账号失败（该账号不会再执行部署），但不会影响后续账号继续部署。
 
 ### 批量删除
 
