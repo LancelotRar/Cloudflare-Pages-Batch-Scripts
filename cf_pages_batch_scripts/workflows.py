@@ -258,6 +258,24 @@ def sync_dns_record(api: CfApiClient, account: Account) -> bool:
     if not dns.zone_id or not domain or not content:
         return True
 
+    zone = api.get_zone(dns.zone_id)
+    if zone is None:
+        error = api.last_error
+        print_error(f"  查询 Zone 失败：{error}" if error else "  查询 Zone 失败")
+        return False
+    zone_name = str(zone.get("name", "")).rstrip(".").lower()
+    if not zone_name:
+        print_error(f"  Zone 详情缺少名称，无法校验域名归属：{dns.zone_id}")
+        return False
+    target = domain.rstrip(".").lower()
+    if target != zone_name and not target.endswith(f".{zone_name}"):
+        print_error(
+            f"  域名 '{domain}' 不属于 dns.zone_id 对应的 Zone '{zone_name}'："
+            "Cloudflare 会把不属于该 Zone 的记录名自动拼接 Zone 后缀，"
+            "请检查 dns.zone_id 是否为该域名所在的 Zone"
+        )
+        return False
+
     print_info(f"  正在按内容查询 DNS 记录 '{content}' ...")
     records = api.list_dns_records(dns.zone_id, content)
     if records is None:

@@ -255,7 +255,7 @@ accounts:
 | `accounts[].pages.env[]` | `name` | 环境变量名 |
 | | `type` | `plain_text` 或 `secret_text` |
 | | `value` | 环境变量值 |
-| `accounts[].dns` | `zone_id` | 托管目标域名账户中的 Zone ID，与当前 Pages 账户的 `account_id` 无关 |
+| `accounts[].dns` | `zone_id` | 托管目标域名账户中的 Zone ID，与当前 Pages 账户的 `account_id` 无关；其 Zone 名称必须与 `pages.domain` 的域名后缀一致 |
 | | `dns_token` | 托管目标域名账户的独立 API Token，需对目标 Zone 具有 `DNS Write` 权限；不会使用当前 Pages 账户的 `token` |
 | | `type` | DNS 记录类型，默认 `CNAME` |
 | | `content` | 可选，DNS 记录目标值；省略时自动拼接 `<project_name>.pages.dev`（创建/修改时作为记录值，`domain` 留空时作为清理匹配条件） |
@@ -287,7 +287,7 @@ accounts:
 
 非空 `pages.env` 是受管理环境的完整白名单，脚本会添加或修改目标变量，并删除未声明的多余变量。`kv_create` 是部署阶段的 KV 操作总开关：为 `false` 时部署阶段完全不执行 KV 操作（不查询、不创建、不改绑定；该开关不影响删除流程，删除会清理账号下全部 KV 命名空间）；为 `true` 时要求 `kv_namespace`、`kv_binding: true`、`kv_binding_env` 配置完整（缺失则该账号报错跳过），随后确保命名空间存在（查询优先、缺失才创建）并将项目 KV 绑定严格收敛为唯一目标绑定。环境变量为空时不做任何环境变量操作。
 
-`dns.zone_id` 与 `dns.dns_token` 均非空时，脚本使用域名托管账户的 `dns_token` 和 `zone_id` 建立独立 DNS API 请求，不使用 Pages 项目账户的 `token` 或 `account_id`。DNS 记录目标值默认由 `pages.project_name` 拼接为 `<project_name>.pages.dev`，只有目标域名不同时才需要显式写 `content`。随后通过 Cloudflare API 的 `content.exact` 查询参数精确匹配 DNS 记录。`domain` 非空时，找到记录后会将其名称、类型、代理状态和 TTL 修改为声明配置；记录不存在时创建，重复内容的记录会收敛为一条。`domain` 为空时则删除匹配到的记录；未配置 `zone_id` 或 `dns_token` 时打印警告并跳过 DNS 清理，仅解绑自定义域名。DNS 查询、创建、修改或删除失败会显示 Cloudflare API 错误详情并使当前账号失败（该账号不会再执行部署），但不会影响后续账号继续部署。
+`dns.zone_id` 与 `dns.dns_token` 均非空时，脚本使用域名托管账户的 `dns_token` 和 `zone_id` 建立独立 DNS API 请求，不使用 Pages 项目账户的 `token` 或 `account_id`。DNS 记录目标值默认由 `pages.project_name` 拼接为 `<project_name>.pages.dev`，只有目标域名不同时才需要显式写 `content`。随后通过 Cloudflare API 的 `content.exact` 查询参数精确匹配 DNS 记录。写入前会先查询 `zone_id` 对应的 Zone 名称，确认 `pages.domain` 属于该 Zone；不匹配时直接让当前账号失败——Cloudflare 对不属于 Zone 的记录名不会报错，而是自动拼接 Zone 后缀，导致记录静默写到错误的 Zone。`domain` 非空时，找到记录后会将其名称、类型、代理状态和 TTL 修改为声明配置；记录不存在时创建，重复内容的记录会收敛为一条。`domain` 为空时则删除匹配到的记录；未配置 `zone_id` 或 `dns_token` 时打印警告并跳过 DNS 清理，仅解绑自定义域名。DNS 查询、创建、修改或删除失败会显示 Cloudflare API 错误详情并使当前账号失败（该账号不会再执行部署），但不会影响后续账号继续部署。
 
 ### 批量删除
 

@@ -188,6 +188,14 @@ class CfApiClient:
         domain_path = quote(domain, safe="")
         return self._request("DELETE", f"/pages/projects/{project_path}/domains/{domain_path}")
 
+    def get_zone(self, zone_id: str) -> dict | None:
+        """查询 Zone 详情，用于校验 pages.domain 是否属于该 Zone。"""
+        data = self._request_url("GET", f"{CF_API_BASE}/zones/{quote(zone_id, safe='')}")
+        if data and data.get("success"):
+            result: dict = data["result"]
+            return result
+        return None
+
     def list_dns_records(self, zone_id: str, content: str) -> list[dict] | None:
         results: list[dict] = []
         page = 1

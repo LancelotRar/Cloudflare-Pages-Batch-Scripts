@@ -532,9 +532,15 @@ class TestSyncDnsRecord:
             dns=dns,
         )
 
+    def make_api(self) -> Mock:
+        """Zone 查询默认返回 app.example.com 所属的 example.com。"""
+        api = Mock()
+        api.get_zone.return_value = {"name": "example.com"}
+        return api
+
     def test_derives_content_from_project_name(self):
         """省略 dns.content 时按 <project_name>.pages.dev 拼接目标域名。"""
-        api = Mock()
+        api = self.make_api()
         api.list_dns_records.return_value = []
         api.create_dns_record.return_value = {"success": True}
 
@@ -552,7 +558,7 @@ class TestSyncDnsRecord:
         )
 
     def test_explicit_content_overrides_derived(self):
-        api = Mock()
+        api = self.make_api()
         api.list_dns_records.return_value = []
         api.create_dns_record.return_value = {"success": True}
 
@@ -560,7 +566,7 @@ class TestSyncDnsRecord:
         api.list_dns_records.assert_called_once_with("zone", "custom.pages.dev")
 
     def test_creates_missing_record(self):
-        api = Mock()
+        api = self.make_api()
         api.list_dns_records.return_value = []
         api.create_dns_record.return_value = {"success": True}
         dns = DnsConfig(zone_id="zone", content="target.pages.dev")
@@ -578,7 +584,7 @@ class TestSyncDnsRecord:
         )
 
     def test_skips_matching_record(self):
-        api = Mock()
+        api = self.make_api()
         api.list_dns_records.return_value = [
             {
                 "id": "r1",
@@ -595,7 +601,7 @@ class TestSyncDnsRecord:
         api.update_dns_record.assert_not_called()
 
     def test_updates_record_name_found_by_content(self):
-        api = Mock()
+        api = self.make_api()
         api.list_dns_records.return_value = [
             {
                 "id": "r1",
@@ -623,7 +629,7 @@ class TestSyncDnsRecord:
         )
 
     def test_updates_record_type_found_by_content(self):
-        api = Mock()
+        api = self.make_api()
         api.list_dns_records.return_value = [
             {
                 "id": "old",
@@ -637,6 +643,7 @@ class TestSyncDnsRecord:
 
         assert sync_dns_record(api, self.make_account(dns)) is True
         assert api.method_calls == [
+            call.get_zone("zone"),
             call.list_dns_records("zone", "target.pages.dev"),
             call.update_dns_record(
                 "zone",
@@ -650,6 +657,43 @@ class TestSyncDnsRecord:
                 },
             ),
         ]
+
+    def test_rejects_domain_outside_zone(self):
+        """pages.domain 不属于 dns.zone_id 时拒绝写入，避免记录落到错误 Zone。"""
+        api = self.make_api()
+        api.get_zone.return_value = {"name": "other.dpdns.org"}
+        dns = DnsConfig(zone_id="zone", content="target.pages.dev")
+
+        assert sync_dns_record(api, self.make_account(dns)) is False
+        api.list_dns_records.assert_not_called()
+        api.create_dns_record.assert_not_called()
+        api.update_dns_record.assert_not_called()
+
+    def test_stops_when_zone_query_fails(self):
+        api = self.make_api()
+        api.get_zone.return_value = None
+        dns = DnsConfig(zone_id="zone", content="target.pages.dev")
+
+        assert sync_dns_record(api, self.make_account(dns)) is False
+        api.list_dns_records.assert_not_called()
+
+    def test_accepts_domain_equal_to_zone_apex(self):
+        api = self.make_api()
+        api.get_zone.return_value = {"name": "example.com."}
+        api.list_dns_records.return_value = []
+        api.create_dns_record.return_value = {"success": True}
+        dns = DnsConfig(zone_id="zone", content="target.pages.dev")
+
+        assert sync_dns_record(api, self.make_account(dns, domain="example.com")) is True
+        api.create_dns_record.assert_called_once()
+
+    def test_rejects_lookalike_suffix(self):
+        """后缀必须按标签边界匹配，notexample.com 不算 example.com 的子域。"""
+        api = self.make_api()
+        dns = DnsConfig(zone_id="zone", content="target.pages.dev")
+
+        assert sync_dns_record(api, self.make_account(dns, domain="notexample.com")) is False
+        api.create_dns_record.assert_not_called()
 
 
 class TestDeployProjectDnsResult:

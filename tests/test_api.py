@@ -250,6 +250,22 @@ class TestApiMethods:
         result = client.delete_domain("p", "example.com")
         assert result is not None
 
+    def test_get_zone(self, client: CfApiClient, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(
+            url=f"{API_BASE}/zones/zone",
+            json={"success": True, "result": {"id": "zone", "name": "example.com"}},
+        )
+        assert client.get_zone("zone") == {"id": "zone", "name": "example.com"}
+
+    def test_get_zone_failure_returns_none(self, client: CfApiClient, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(
+            url=f"{API_BASE}/zones/zone",
+            status_code=404,
+            json={"success": False, "errors": [{"code": 7003, "message": "Could not route"}]},
+        )
+        assert client.get_zone("zone") is None
+        assert client.last_error == "Cloudflare API 404 [7003]: Could not route"
+
     def test_list_dns_records(self, client: CfApiClient, httpx_mock: HTTPXMock):
         httpx_mock.add_response(
             url=f"{API_BASE}/zones/zone/dns_records?page=1&per_page=100&content.exact=target.pages.dev",
